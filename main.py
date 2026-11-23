@@ -8,12 +8,18 @@
   python main.py --scheduled        # GitHub Actions 使用
    python main.py --sync-only        # 只采集全部免费数据源并入库
    python main.py --demo             # 无密钥演示完整报告
-  python main.py --listen           # 本地轮询 Telegram 命令
+  python main.py --import-technical-report --summary "..." --bias 偏多 --date 2026-11-23
+   python main.py --listen           # 本地轮询 Telegram 命令
 """
 from __future__ import annotations
 
 import argparse
+import json
 import uuid
+from datetime import date
+from pathlib import Path
+
+from config import TECHNICAL_SYMBOLS
 
 from analysis.gold_bias import bias_label
 from alerts.message_templates import render_daily_report
@@ -42,6 +48,20 @@ def set_env_value(key: str, value: str) -> None:
     if not replaced:
         lines.append(f"{key}={value}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def load_technical_json(raw: str) -> dict:
+    """读取手动技术面报告：支持 JSON 字符串或 .json 文件路径（对象/对象数组）。"""
+    path = Path(raw)
+    text = path.read_text(encoding="utf-8-sig") if path.exists() else raw
+    data = json.loads(text)
+    if isinstance(data, list):
+        if not data:
+            raise ValueError("JSON 列表为空")
+        data = data[0]
+    if not isinstance(data, dict):
+        raise ValueError("JSON 必须是对象或对象数组")
+    return data
 
 
 def command_handler(command: str, message: dict) -> str:
@@ -77,6 +97,21 @@ def command_handler(command: str, message: dict) -> str:
     if command == "/cot":
         flows = market.get("flows") or []
         return "\n".join(f"{f['name']}: {f['text']}" for f in flows) or "暂无 COT/ETF 数据，请用 --import-flow 导入。"
+    if command == "/tech":
+        reports = market.get("technical") or []
+        if not reports:
+            return "暂无技术面报告，请先运行 --sync-only 或使用 --import-technical-report 导入。"
+        report = reports[0]
+        lines = [
+            f"{report.get('label') or report.get('symbol')}（{report.get('as_of') or report.get('report_date')}）",
+            f"方向：{report.get('bias') or '中性震荡'}",
+        ]
+        if report.get("close") is not None:
+            lines.append(f"收盘：{float(report['close']):.2f}")
+        if report.get("summary"):
+            lines.append(str(report["summary"]))
+        lines.append(report.get("disclaimer") or "本地自算技术面，仅供研究。")
+        return "\n".join(lines)
     if command == "/report":
         return render_daily_report(score, {"text": "请把本机 --report 输出的 AI 分析粘贴到此处。", "source": "rule"}, market)
     return "未知命令，发送 /help 查看可用命令。"
@@ -96,6 +131,8 @@ def parse_args() -> argparse.Namespace:
     action.add_argument("--import-fedwatch", action="store_true", help="录入 FedWatch 人工快照")
     action.add_argument("--import-event", action="store_true", help="录入经济数据实际值/预期值")
     action.add_argument("--import-flow", action="store_true", help="录入 COT/ETF 资金流向")
+    action.add_argument("--import-technical-report", action="store_true",
+                        help="录入技术面报告（支持 --report-json 文件或 JSON 字符串）")
     action.add_argument("--setup-ntfy", action="store_true", help="生成免注册 ntfy.sh 推送主题并写入 .env")
     action.add_argument("--telegram-id", action="store_true", help="用 Bot Token 查询你的 Telegram chat_id")
     parser.add_argument("--no-collect", action="store_true", help="跳过 FRED 联网，仅用本地缓存")
@@ -116,6 +153,14 @@ def parse_args() -> argparse.Namespace:
                         help="事件方向：inverse 表示数值越高越利多黄金（如初请失业金人数）")
     parser.add_argument("--type", dest="flow_type", help="资金流向类型：COT / ETF")
     parser.add_argument("--value", type=float, help="净多头或持仓量")
+    parser.add_argument("--symbol", default="", help="技术面报告标的，例如 GC=F")
+    parser.add_argument("--report-type", default="daily", help="技术面报告类型，默认 daily")
+    parser.add_argument("--bias", choices=("偏多", "偏空", "中性震荡", "中性"),
+                        help="技术面方向")
+    parser.add_argument("--title", default="", help="技术面报告标题")
+    parser.add_argument("--summary", default="", help="技术面报告摘要")
+    parser.add_argument("--report-json", default="",
+                        help="技术面报告 JSON 字符串或 .json 文件路径（含 summary/bias 字段）")
     parser.add_argument("--token", help="Telegram Bot Token（仅 --telegram-id 使用）")
     return parser.parse_args()
 
@@ -157,6 +202,46 @@ def main() -> int:
             return 2
         db.add_flow(args.flow_type, args.date, args.value, args.scale)
         print(f"资金流向已保存：{args.flow_type} = {args.value}（{args.date}）")
+        return 0
+    if args.import_technical_report:
+        source = args.source or "manual"
+        report_symbol = args.symbol or (TECHNICAL_SYMBOLS[0] if TECHNICAL_SYMBOLS else "GC=F")
+        report_date = args.date or date.today().isoformat()
+        report_type = args.report_type
+        title = args.title or f"{report_symbol} 技术面报告"
+        raw_json = None
+        if args.report_json:
+            try:
+                data = load_technical_json(args.report_json)
+            except (OSError, ValueError) as exc:
+                print(f"技术面报告 JSON 解析失败：{exc}")
+                return 2
+            report_symbol = str(data.get("symbol") or report_symbol)
+            report_date = str(data.get("report_date") or data.get("as_of") or report_date)
+            report_type = str(data.get("report_type") or report_type)
+            title = str(data.get("title") or title)
+            bias = str(data.get("bias") or args.bias or "中性震荡")
+            summary = str(data.get("summary") or args.summary or "")
+            payload = data
+            raw_json = json.dumps(data, ensure_ascii=False)
+        else:
+            bias = args.bias or ""
+            summary = args.summary or ""
+            payload = {
+                "source": source, "symbol": report_symbol, "report_date": report_date,
+                "report_type": report_type, "title": title, "bias": bias,
+                "summary": summary,
+                "disclaimer": "人工录入技术面报告，非 Trading Central 官方研报。",
+            }
+        if not summary or not bias:
+            print("需要 --summary 和 --bias，或提供含 summary / bias 字段的 --report-json")
+            return 2
+        db.upsert_technical_report(
+            source=source, symbol=report_symbol, date=report_date,
+            report_type=report_type, title=title, bias=bias, summary=summary,
+            payload=payload, raw_json=raw_json,
+        )
+        print(f"技术面报告已保存：{report_symbol} {report_date}（{bias}，来源 {source}）")
         return 0
     if args.setup_ntfy:
         topic = f"goldmacroai-{uuid.uuid4().hex[:12]}"

@@ -20,6 +20,7 @@ from data.fedwatch_auto import collect as collect_fedwatch
 from data.fomc import collect as collect_fomc
 from data.fred import collect as collect_fred
 from data.macro_auto import collect as collect_macro
+from data.technical import collect as collect_technical
 from database.models import Database
 
 RATE_SERIES = {"DFII10", "DGS2", "DGS10", "DFF", "T10YIE"}
@@ -42,6 +43,7 @@ def collect_all(db: Database) -> dict:
         ("COT", collect_cot),
         ("WGC_ETF", collect_etf),
         ("FOMC", collect_fomc),
+        ("Technical", collect_technical),
     )
     for name, func in collectors:
         try:
@@ -65,7 +67,7 @@ def describe_collection(summary: dict) -> str:
             parts.append(f"[{result['source']}]")
         for key, label in (("fetched", "抓取"), ("saved", "写入"),
                            ("snapshots", "快照"), ("weeks", "周"),
-                           ("documents", "文件")):
+                           ("documents", "文件"), ("reports", "报告")):
             if result.get(key) is not None:
                 parts.append(f"{label} {result[key]}")
         if isinstance(result.get("series"), dict):
@@ -78,6 +80,10 @@ def describe_collection(summary: dict) -> str:
                 parts.append(f"= {latest['value']}")
             if latest.get("cut") is not None:
                 parts.append(f"降息 {latest['cut']}% / 加息 {latest.get('hike')}%")
+            if latest.get("symbol"):
+                parts.append(f"{latest['symbol']} {latest.get('bias', '')}")
+            if latest.get("close") is not None:
+                parts.append(f"收盘 {latest['close']}")
         lines.append("  " + " ".join(parts))
     return "\n".join(lines)
 
@@ -206,6 +212,8 @@ def build_market(db: Database) -> tuple[dict, dict]:
         "next_meeting": (fed or {}).get("meeting_date", ""),
         "documents": docs,
     }
+    # 技术面只作为报告上下文展示，不参与宏观评分
+    market["technical"] = db.technical_reports(limit=12)
     market["calendar"] = upcoming_events(hours=24)
     return market, inputs
 
@@ -244,6 +252,13 @@ def demo_market() -> tuple[dict, dict]:
                            "title": f"FOMC Statement {today}",
                            "url": "https://www.federalreserve.gov/"}],
         },
+        "technical": [{
+            "source": "Yahoo Finance 公开行情 + 本地规则计算",
+            "symbol": "GC=F", "label": "COMEX黄金期货", "report_date": today,
+            "as_of": today, "bias": "偏多", "close": 3623.5,
+            "summary": f"日线偏多：收盘 3623.50，RSI14 58.2；MACD 柱 +12.40；支撑 3560.00 / 3520.00，阻力 3680.00 / 3720.00。",
+            "disclaimer": "本地自算技术面，数据来自 Yahoo Finance 公开行情；非 Trading Central 官方研报，不构成投资建议。",
+        }],
         "calendar": [],
     }
     inputs = {

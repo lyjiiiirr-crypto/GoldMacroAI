@@ -18,6 +18,7 @@ TABLES = (
     "events",
     "flows",
     "fomc_documents",
+    "technical_reports",
     "reports",
     "alert_log",
 )
@@ -86,6 +87,21 @@ class Database:
                     created_at TEXT,
                     PRIMARY KEY (doc_type, doc_date)
                 );
+                CREATE TABLE IF NOT EXISTS technical_reports (
+                    source TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    report_date TEXT NOT NULL,
+                    report_type TEXT NOT NULL,
+                    title TEXT,
+                    bias TEXT,
+                    summary TEXT,
+                    payload TEXT,
+                    raw_json TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (source, symbol, report_date, report_type)
+                );
+                CREATE INDEX IF NOT EXISTS idx_technical_reports_lookup
+                    ON technical_reports (report_date DESC, symbol);
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     score REAL NOT NULL,
@@ -273,6 +289,49 @@ class Database:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # ---- 技术面报告（自动采集 / 人工导入共用） ----
+    def upsert_technical_report(
+        self, source: str, symbol: str, date: str, report_type: str,
+        title: str, bias: str, summary: str, payload: dict | str,
+        raw_json: str | None = None,
+    ) -> None:
+        """按 (来源, 标的, 日期, 类型) 幂等写入；人工来源与自动来源可并存。"""
+        payload_text = payload if isinstance(payload, str) else json.dumps(
+            payload or {}, ensure_ascii=False
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO technical_reports "
+                "(source, symbol, report_date, report_type, title, bias, summary, "
+                " payload, raw_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (source, symbol, str(date), report_type, title, bias, summary,
+                 payload_text, raw_json,
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+
+    def technical_reports(self, symbol: str | None = None, limit: int = 10) -> list[dict]:
+        sql = (
+            "SELECT source, symbol, report_date, report_type, title, bias, summary, "
+            "payload, raw_json, created_at FROM technical_reports"
+        )
+        params: list = []
+        if symbol:
+            sql += " WHERE symbol = ?"
+            params.append(symbol)
+        sql += " ORDER BY report_date DESC, created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item["payload"] or "{}")
+            except (TypeError, ValueError):
+                item["payload"] = {}
+            result.append(item)
+        return result
 
     # ---- 历史报告 ----
     def save_report(self, score: float, bias: str, payload: dict) -> None:

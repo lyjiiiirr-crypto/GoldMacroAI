@@ -57,16 +57,17 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | FOMC 文件索引 | 自动索引 Statement / Minutes / Press Conference / SEP / 点阵图的官方链接 |
 | CFTC COT 自动采集 | 官方年度 ZIP，解析 COMEX 黄金 Managed Money 净多头、多空持仓与未平仓量 |
 | WGC ETF 自动采集 | 公开图表接口，按周汇总全球持仓吨数与资金流，保留分项数据 |
+| 技术面报告（本地自算） | Yahoo Finance 公开行情 `GC=F` 日线，自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
 | 时效性控制 | 每条数据记录观测日期；过期数据不参与打分，并降低置信度 |
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
-| 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/bias` `/report` `/help` |
+| 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/bias` `/report` `/help` |
 | 定时任务 | GitHub Actions 每 6 小时运行，历史数据库自动保存回仓库 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
-**V1.0 仍不做/限制**：CME 官方 FedWatch API（收费，本项目使用社区公开归档，非官方承诺）、市场一致预期（BLS/BEA 不发布，故不伪造"意外值"，仍可人工导入）、秒级行情监控、交易结构识别（V2.0）。
+**V1.0 仍不做/限制**：CME 官方 FedWatch API（收费，本项目使用社区公开归档，非官方承诺）、Trading Central 授权研报（商业/B2B 产品，无可验证免费公开源，本项目改用公开行情本地自算并明确标注非官方研报）、市场一致预期（BLS/BEA 不发布，故不伪造"意外值"，仍可人工导入）、秒级行情监控、交易结构识别（V2.0）。
 
 ### 数据源与归属（全部免费、无需付费 API）
 
@@ -79,6 +80,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | FOMC 文件 | [federalreserve.gov](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm) | 只保存标题、日期与官方链接，不转载正文；点阵图在 SEP 页面中 |
 | COT | [CFTC 官方历史 ZIP](https://www.cftc.gov/files/dea/history/) | COMEX 黄金 Managed Money 净多头；每周发布日期滞后约 3 天 |
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
+| 黄金技术面 | Yahoo Finance 公开行情 `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
 
 ## 目录结构
 
@@ -90,7 +92,7 @@ GoldMacroAI/
 ├── requirements-dashboard.txt  仪表盘可选依赖
 ├── .env.example
 ├── data/                       fred.py / common.py / fedwatch.py / fedwatch_auto.py
-│                               dxy.py / macro_auto.py / cot.py / etf.py / fomc.py / calendar.py
+│                               dxy.py / macro_auto.py / cot.py / etf.py / fomc.py / technical.py / calendar.py
 ├── analysis/                   data_cleaner.py / macro_score.py / gold_bias.py / ai_interpreter.py
 ├── alerts/                     telegram_bot.py / message_templates.py / alert_rules.py
 ├── database/                   models.py（SQLite，运行时生成 gold_macro.db）
@@ -165,6 +167,12 @@ python main.py --import-event --name 初请失业金 --actual 250000 --expected 
 # 资金流向：COT 净多头或 ETF 持仓（scale 为满信号变化量）
 python main.py --import-flow --type COT --value 250000 --scale 30000 --date 2026-11-14
 python main.py --import-flow --type ETF --value 1100 --scale 50 --date 2026-11-14
+
+# 技术面报告：自动采集失败时手动录入（与自动来源按来源区分，不会互相覆盖）
+python main.py --import-technical-report --date 2026-11-23 --symbol GC=F --bias 偏多 --summary "日线偏多，RSI 58，支撑 3560，阻力 3680"
+
+# 或用 JSON 文件一次导入完整结构化报告（可含 indicators / levels / signals）
+python main.py --import-technical-report --date 2026-11-23 --report-json my_technical_report.json
 ```
 
 未来 24 小时经济事件：复制 `data/calendar.example.json` 为 `data/calendar.json` 并按自己的日历修改。
@@ -222,6 +230,7 @@ python main.py --listen
 
 - **报告显示「数据不足」**：先运行 `--sync-only` 看每个来源的成功/失败原因。若某个来源被网络限制，其他来源不受影响；仍可用 `--import-fedwatch` / `--import-event` / `--import-flow` 手工补齐。
 - **FedWatch 降息概率一直是 0%**：当前周期市场定价主要是"加息 vs 不变"，系统会自动改用鹰鸽净变化评分；报告里同时显示加息概率。
+- **需要 Trading Central 官方技术分析报告吗**：Trading Central 是商业/B2B 授权研报，官网无免费公开报告接口，本项目不抓取或转载其付费内容。当前技术面由 Yahoo Finance 公开行情本地自算，报告中明确标注来源；若你已有合法授权接口，可用 `--import-technical-report --report-json` 导入。
 - **收不到推送**：没配置 Telegram 时先运行 `--setup-ntfy` 获取订阅网址；配置 Telegram 时确认已给机器人发过 `/start`、chat_id 正确（`--telegram-id` 可查），Token 未填错。
 - **AI 解读来源显示「规则模板」**：本地 Ollama 未启动或云端接口未配置，系统自动降级，不影响数据采集与推送。
 - **GitHub 数据库没更新**：确认仓库为私有且 Actions 有 `contents: write` 权限；工作流使用 `git add -f` 忽略本地 `.gitignore` 规则。

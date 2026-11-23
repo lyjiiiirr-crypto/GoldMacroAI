@@ -78,6 +78,36 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
         lines += ["", "<b>资金流向</b>"]
         lines += [f"- {ESC(f['name'])}：{f['text']}" for f in flows[:3]]
 
+    technical = market.get("technical") or []
+    if technical:
+        lines += ["", "<b>技术面（本地自算）</b>"]
+        for report in technical[:2]:
+            label = report.get("label") or report.get("symbol") or "技术面"
+            as_of = report.get("as_of") or report.get("report_date") or ""
+            head = (f"- {ESC(str(label))}（{ESC(str(as_of))}）："
+                    f"{ESC(str(report.get('bias') or '中性震荡'))}")
+            close = report.get("close")
+            if close is not None:
+                head += f"，收盘 {float(close):.2f}"
+            lines.append(head)
+            if report.get("summary"):
+                lines.append("  " + ESC(str(report["summary"])))
+            payload = report.get("payload")
+            indicators = (payload.get("indicators") if isinstance(payload, dict) else {}) or {}
+            levels = (payload.get("levels") if isinstance(payload, dict) else {}) or {}
+            bits = []
+            if indicators.get("rsi14") is not None:
+                bits.append(f"RSI {float(indicators['rsi14']):.1f}")
+            if indicators.get("histogram") is not None:
+                bits.append(f"MACD柱 {float(indicators['histogram']):+.2f}")
+            for key, name in (("support", "支撑"), ("resistance", "阻力")):
+                values = levels.get(key) or []
+                if values:
+                    bits.append(f"{name} " + "/".join(f"{float(v):.2f}" for v in values))
+            if bits:
+                lines.append("  " + ESC("；".join(bits)))
+        lines.append("  <i>来源：Yahoo Finance 公开行情 + 本地规则计算，非 Trading Central 官方研报。</i>")
+
     calendar = market.get("calendar") or []
     if calendar:
         lines += ["", "<b>未来24小时事件</b>"]

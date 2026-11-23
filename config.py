@@ -136,6 +136,14 @@ YHOO_DXY_URL = env(
     "YHOO_DXY_URL",
     "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?range=1mo&interval=1d",
 )
+# 技术面报告：Yahoo Finance 公开行情 + 本地规则计算（非 Trading Central 官方研报）
+YHOO_TECH_URL = env(
+    "YHOO_TECH_URL",
+    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1y&interval=1d",
+)
+TECHNICAL_SYMBOLS = tuple(
+    s.strip() for s in env("TECHNICAL_SYMBOLS", "GC=F").split(",") if s.strip()
+)
 # Yahoo 限流时使用欧洲央行公开汇率按 ICE DXY 权重计算的近似值（免费、无 Key）
 FRANKFURTER_URL = env(
     "FRANKFURTER_URL",
