@@ -230,7 +230,7 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
 
 def build_crt_chart(market: dict | None) -> bytes | None:
     """从 market['crt'][0] 构造截图；数据不足时返回 None。"""
-    for row in ((market or {}).get("crt") or [])[:1]:
+    for row in ((market or {}).get("crt") or []):
         data = row.get("payload") if isinstance(row.get("payload"), dict) else {}
 
         def pick(key, default=None):
@@ -239,7 +239,7 @@ def build_crt_chart(market: dict | None) -> bytes | None:
 
         candles = pick("candles") or []
         if len(candles) < 3:
-            return None
+            continue  # 旧版快照不足 3 根，继续找下一条
         return render_crt_png(
             candles[-3:],
             range_high=pick("range_high", pick("prev_high")),

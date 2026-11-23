@@ -229,7 +229,13 @@ def build_market(db: Database) -> tuple[dict, dict]:
     # 技术面 / GEX / CRT 只作为报告上下文展示，不参与宏观评分
     market["technical"] = db.technical_reports(limit=12)
     market["gex"] = db.gex_snapshots(limit=8)
-    market["crt"] = db.crt_snapshots(limit=8)
+    crt_rows = db.crt_snapshots(limit=8)
+    # 旧版两根快照没有完整 candles，优先展示可用的三根结构（截图也依赖它）
+    three_candle = [
+        row for row in crt_rows
+        if len((row.get("payload") or {}).get("candles") or []) >= 3
+    ]
+    market["crt"] = three_candle or crt_rows
     market["calendar"] = upcoming_events(hours=24)
     return market, inputs
 

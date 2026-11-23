@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 from datetime import datetime, timedelta, timezone
 
 from analysis.gold_bias import DISCLAIMER, bias_label, score_bar
@@ -244,9 +245,18 @@ def _polymarket_bias(question: str, probability) -> str:
     if value < 50:
         return "中性"
     text = str(question or "").lower()
-    if any(key in text for key in ("cut", "降息", "ease", "lower")):
+    # 用单词边界，避免 "ease" 命中 "increase"（加息）这类子串误判
+    dovish = re.search(
+        r"\b(cut|cuts|cutting|ease|easing|lower|lowers|lowering|decrease|decreases|"
+        r"decreasing|dovish)\b", text
+    )
+    hawkish = re.search(
+        r"\b(hike|hikes|hiking|raise|raises|raising|increase|increases|increasing|hawkish)\b",
+        text,
+    )
+    if dovish or any(key in text for key in ("降息", "宽松", "下调")):
         return "偏多"
-    if any(key in text for key in ("hike", "加息", "raise", "increase")):
+    if hawkish or any(key in text for key in ("加息", "收紧", "上调")):
         return "偏空"
     return "中性"
 

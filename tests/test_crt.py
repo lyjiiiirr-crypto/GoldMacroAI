@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from alerts.crt_chart import build_crt_chart, render_crt_png
-from alerts.message_templates import render_crt_lines, render_daily_report, render_execution_lines
+from alerts.message_templates import (
+    _polymarket_bias, render_crt_lines, render_daily_report, render_execution_lines,
+)
 from alerts.telegram_bot import COMMANDS
 from analysis.macro_score import compute_score
 from data.crt import (
@@ -309,6 +311,12 @@ class CrtChartTests(unittest.TestCase):
         self.assertIsNotNone(png)
         self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_build_chart_skips_rows_without_candles(self):
+        snap = crt_snapshot("XAUUSD", bullish_bars())
+        png = build_crt_chart({"crt": [{"candles": []}, snap]})
+        self.assertIsNotNone(png)
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+
     def test_build_chart_degrades_without_candles(self):
         self.assertIsNone(build_crt_chart({}))
         self.assertIsNone(build_crt_chart({"crt": [{"candles": []}]}))
@@ -361,6 +369,19 @@ class PolymarketTests(unittest.TestCase):
         items = parse_rate_markets(markets)
         self.assertEqual(items[0]["yes_probability"], 10.0)
         self.assertEqual(items[0]["label"], "Yes")
+
+    def test_polymarket_bias_does_not_treat_increase_as_easing(self):
+        self.assertEqual(
+            _polymarket_bias(
+                "Will the Fed increase interest rates by 25 bps after the December 2026 meeting?",
+                92.5,
+            ),
+            "偏空",
+        )
+        self.assertEqual(
+            _polymarket_bias("Will the Fed decrease interest rates?", 68.0), "偏多"
+        )
+        self.assertEqual(_polymarket_bias("Fed rate decision", 20.0), "中性")
 
     def test_build_snapshot_and_manual_import(self):
         snap = build_snapshot(self.sample_markets())
