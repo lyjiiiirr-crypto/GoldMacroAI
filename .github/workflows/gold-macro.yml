@@ -5,6 +5,7 @@ on:
     # TradingView 4H 收线为北京时间 10/14/18/22/02/06（UTC 02/06/10/14/18/22）
     # 收线后 1 分钟内采集；GitHub 定时可能延迟，无法保证秒级精确
     - cron: '1 2,6,10,14,18,22 * * *'
+    - cron: '50 14 * * *' # TEMP: verify schedule registration, remove after test
   workflow_dispatch:
 
 permissions:
