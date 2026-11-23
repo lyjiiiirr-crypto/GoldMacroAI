@@ -1,4 +1,4 @@
-"""GEX 地图与 Gamma 翻转点（Yahoo 免费期权链，本地近似估算）。
+"""GEX 地图与 Gamma 翻转点（Cboe 免费延迟期权报价，本地近似估算）。
 
 GEX = Γ × OI × 100 × S² × 0.01，看涨为正、看跌为负（标准 dealer-positioning 假设）。
 Gamma flip 通过把现货价当变量、固定 IV/OI/到期时间重定价整条链，找净 GEX 过零点，

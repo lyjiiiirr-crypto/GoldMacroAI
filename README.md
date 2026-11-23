@@ -183,7 +183,7 @@ python main.py --import-gex --date 2026-11-23 --gex-json gex_snapshot.json
 python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rate 0.04
 ```
 
-GEX 报告中会明确标注「Yahoo 延迟期权链 + 本地 Black-Scholes 估算、非做市商真实库存、非交易信号」；`gex_snapshots` 表按（来源、标的、日期）幂等写入，人工导入与自动采集互不覆盖。
+GEX 报告中会明确标注「Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算、非做市商真实库存、非交易信号」；`gex_snapshots` 表按（来源、标的、日期）幂等写入，人工导入与自动采集互不覆盖。
 
 未来 24 小时经济事件：复制 `data/calendar.example.json` 为 `data/calendar.json` 并按自己的日历修改。
 
