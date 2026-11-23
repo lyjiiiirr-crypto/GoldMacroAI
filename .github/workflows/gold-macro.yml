@@ -1,12 +1,14 @@
 name: GoldMacroAI scheduled run
 
 on:
-  schedule:
-    # TradingView 4H 收线为北京时间 10/14/18/22/02/06（UTC 02/06/10/14/18/22）
-    # 收线后 1 分钟内采集；GitHub 定时可能延迟，无法保证秒级精确
-    - cron: '1 2,6,10,14,18,22 * * *'
-    - cron: '50 14 * * *' # TEMP: verify schedule registration, remove after test
   workflow_dispatch:
+
+# GitHub 原生 schedule 在本仓库不产生任何 run（已验证 0 次），
+# 改由 gold-macro-keeper.yml 在云端每 4 小时触发本工作流。
+# 同一时段只允许一个日报任务，避免重复推送。
+concurrency:
+  group: gold-macro-report
+  cancel-in-progress: false
 
 permissions:
   contents: write

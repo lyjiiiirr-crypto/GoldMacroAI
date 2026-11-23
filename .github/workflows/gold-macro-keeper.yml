@@ -1,0 +1,83 @@
+name: GoldMacroAI cloud keeper
+
+# GitHub 原生 schedule 事件在本仓库完全不触发，因此用一个云端常驻的
+# workflow_dispatch 链代替定时器：每次运行等到下一个 UTC 02:06/06:06/
+# 10:06/14:06/18:06/22:06，触发日报工作流，再触发下一次 keeper。
+# 全程在 GitHub Actions 云端完成，不依赖本地电脑；公开仓库免费额度内。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '仅验证调度逻辑，不触发日报也不续链'
+        required: false
+        default: 'false'
+      test_seconds:
+        description: '验证用：覆盖等待秒数（0 = 按正常 4 小时节奏）'
+        required: false
+        default: '0'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  keeper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Compute next dispatch time
+        id: timing
+        run: |
+          python3 - <<'PY' > seconds.txt
+          from datetime import datetime, timedelta, timezone
+
+          now = datetime.now(timezone.utc)
+          targets = [
+              now.replace(hour=h, minute=6, second=0, microsecond=0)
+              for h in (2, 6, 10, 14, 18, 22)
+          ]
+          targets = [t + timedelta(days=1) if t <= now else t for t in targets]
+          nxt = min(targets)
+          print(int((nxt - now).total_seconds()))
+          PY
+          seconds="$(cat seconds.txt)"
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "next=$(date -u -d "@$(( $(date +%s) + seconds ))" '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
+          echo "Next dispatch: $(date -u -d "@$(( $(date +%s) + seconds ))" '+%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Wait until target
+        run: |
+          seconds="${{ inputs.test_seconds }}"
+          if [ -z "$seconds" ] || [ "$seconds" = "0" ]; then
+            seconds="${{ steps.timing.outputs.seconds }}"
+          fi
+          echo "Waiting $seconds seconds"
+          sleep "$seconds"
+
+      - name: Dispatch report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            gh workflow run schedule-probe.yml --repo lyjiiiirr-crypto/GoldMacroAI --ref main
+            echo "Dry-run heartbeat dispatched at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          else
+            gh workflow run gold-macro.yml --repo lyjiiiirr-crypto/GoldMacroAI --ref main
+            echo "Macro report dispatched at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          fi
+
+      - name: Chain next keeper run
+        if: ${{ inputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3; do
+            if gh workflow run gold-macro-keeper.yml --repo lyjiiiirr-crypto/GoldMacroAI --ref main; then
+              echo "Next keeper chained at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "Failed to chain next keeper run"
+          exit 1
