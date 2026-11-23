@@ -12,6 +12,14 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 
 > 提示：`.env` 含密钥，不要公开或提交到仓库；重新分发时请从 ZIP 解压并重新生成本地配置。
 
+## GitHub 云端定时部署
+
+- 仓库：<https://github.com/lyjiiiirr-crypto/GoldMacroAI>（Public）
+- `.github/workflows/gold-macro.yml`：每 6 小时（UTC）自动运行一次，也可在 Actions 页面点 **Run workflow** 手动触发。
+- 所需 Secrets（Settings → Secrets and variables → Actions）：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`NTFY_TOPIC`。密钥只存在 GitHub Secrets，不进代码库。
+- 每次运行后历史数据库 `database/gold_macro.db` 会自动提交回仓库（`.gitignore` 默认忽略，工作流中强制添加）。
+- 修改代码后直接 `git push` 即可，GitHub Actions 会自动使用仓库里的 Secrets。
+
 ## 零配置模式（不需要任何账号）
 
 - **FRED 数据**：未配置 `FRED_API_KEY` 时自动回退到 FRED 官方公开 CSV 接口（`fredgraph.csv`），无需注册。配置免费 Key 后会自动优先使用官方 JSON API。Windows 下若 urllib 因代理超时，会自动改用系统自带的 `curl.exe` 回退。
