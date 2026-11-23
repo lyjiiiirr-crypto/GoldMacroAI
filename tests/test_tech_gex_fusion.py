@@ -3,7 +3,7 @@ import unittest
 from alerts.message_templates import render_daily_report, render_fusion_lines
 from alerts.telegram_bot import COMMANDS
 from analysis.macro_score import compute_score
-from analysis.tech_gex_fusion import fuse, gex_direction, technical_direction
+from analysis.tech_gex_fusion import fuse, gex_bias, gex_direction, technical_direction
 
 
 def technical_row(score=None, bias="中性震荡", label="COMEX黄金期货"):
@@ -83,6 +83,52 @@ class GexDirectionTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["dir"], 0.0)
         self.assertEqual(result["factor"], 1.0)
+
+
+class GexBiasLabelTests(unittest.TestCase):
+    def test_negative_gamma_below_flip_is_bearish(self):
+        result = gex_bias(gex_row("GLD", -4e8, -6.4, "负Gamma"))
+        self.assertEqual(result["label"], "偏空")
+        self.assertEqual(result["icon"], "🔴")
+        self.assertLess(result["dir"], 0)
+        self.assertTrue(result["ok"])
+        self.assertIn("负Gamma", result["reason"])
+        self.assertIn("低于 flip 6.40%", result["reason"])
+
+    def test_positive_gamma_above_flip_is_bullish(self):
+        result = gex_bias(gex_row("GLD", 2e8, 4.0, "正Gamma"))
+        self.assertEqual(result["label"], "偏多")
+        self.assertEqual(result["icon"], "🟢")
+        self.assertGreater(result["dir"], 0)
+        self.assertIn("高于 flip 4.00%", result["reason"])
+
+    def test_wrong_side_of_flip_is_neutral(self):
+        result = gex_bias(gex_row("GLD", -100, 5.0, "负Gamma"))
+        self.assertEqual(result["label"], "中性")
+        self.assertEqual(result["icon"], "⚪")
+        self.assertEqual(result["dir"], 0.0)
+        self.assertIn("方向未确认", result["reason"])
+
+    def test_missing_distance_is_neutral_without_crash(self):
+        result = gex_bias({"symbol": "GLD", "regime": "负Gamma", "net_gex": -100})
+        self.assertEqual(result["label"], "中性")
+        self.assertFalse(result["ok"])
+        self.assertIn("flip 距离未知", result["reason"])
+
+    def test_missing_gex_data_is_neutral_without_crash(self):
+        result = gex_bias({})
+        self.assertEqual(result["label"], "中性")
+        self.assertEqual(result["icon"], "⚪")
+        self.assertFalse(result["ok"])
+        self.assertIn("未判定偏向", result["reason"])
+
+    def test_reads_payload_fallback(self):
+        row = {"payload": {"net_gex": -200, "distance_pct": -3.5, "regime": "负Gamma"}}
+        self.assertEqual(gex_bias(row)["label"], "偏空")
+
+    def test_bias_magnitude_matches_gex_direction_semantics(self):
+        row = gex_row("GLD", -4e8, -6.4, "负Gamma")
+        self.assertAlmostEqual(gex_bias(row)["dir"], gex_direction([row])["dir"])
 
 
 class FusionTests(unittest.TestCase):

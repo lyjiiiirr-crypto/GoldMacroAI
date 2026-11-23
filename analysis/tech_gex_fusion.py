@@ -17,6 +17,7 @@ DISCLAIMER = (
 # GLD 是黄金直接代理，权重高于作为大盘风险背景的 SPY
 GEX_SYMBOL_WEIGHTS = {"GLD": 0.65, "SPY": 0.35}
 BIAS_DIR = {"偏多": 1.0, "偏空": -1.0, "中性震荡": 0.0, "中性": 0.0}
+GEX_BIAS_ICONS = {"偏多": "🟢", "偏空": "🔴", "中性": "⚪"}
 TECH_SCORE_FULL = 4.0   # 技术面 score ±4 视为满信号（bias 阈值为 ±2）
 GEX_DIST_FULL = 8.0     # flip 距离 ±8% 视为满信号
 TECH_WEIGHT = 0.65      # 融合中技术面权重
@@ -128,6 +129,62 @@ def gex_direction(snapshots: list[dict] | None) -> dict:
         "factor": round(factor_sum / weight_sum, 3) if weight_sum else 1.0,
         "details": details,
         "ok": True,
+    }
+
+
+def gex_bias(row: dict | None) -> dict:
+    """给单条 GEX 快照标注多空偏向（仅作背景，不改变宏观评分）。
+
+    规则与 gex_direction 保持一致：
+    - 负 Gamma 且现价低于 flip → 放大下行，标 🔴偏空；
+    - 正 Gamma 且现价高于 flip → 托底支撑，标 🟢偏多；
+    - 其余（含数据缺失、flip 距离未知、方向冲突）→ ⚪中性。
+    """
+    row = row or {}
+    payload = _payload(row)
+    net = _number(
+        row.get("net_gex") if row.get("net_gex") is not None else payload.get("net_gex")
+    )
+    dist = _number(
+        row.get("distance_pct")
+        if row.get("distance_pct") is not None else payload.get("distance_pct")
+    )
+    regime = str(row.get("regime") or payload.get("regime") or "")
+
+    if net is None:
+        regime_dir = -1 if "负" in regime else 1 if "正" in regime else 0
+    else:
+        regime_dir = -1 if net < 0 else 1 if net > 0 else 0
+    regime_text = regime or (
+        "负Gamma" if regime_dir < 0 else "正Gamma" if regime_dir > 0 else "中性Gamma"
+    )
+
+    if regime_dir == 0:
+        return {
+            "label": "中性", "icon": GEX_BIAS_ICONS["中性"], "dir": 0.0, "ok": False,
+            "reason": "GEX 符号与 regime 均不可用，未判定偏向",
+        }
+    if dist is None:
+        return {
+            "label": "中性", "icon": GEX_BIAS_ICONS["中性"], "dir": 0.0, "ok": False,
+            "reason": f"{regime_text}但 flip 距离未知，未判定偏向",
+        }
+
+    strength = _clamp(abs(dist) / GEX_DIST_FULL, 0.0, 1.0)
+    if regime_dir < 0 and dist < 0:
+        label, direction = "偏空", -strength
+        reason = f"{regime_text}且现价低于 flip {abs(dist):.2f}%，对冲放大下行"
+    elif regime_dir > 0 and dist > 0:
+        label, direction = "偏多", strength * 0.6
+        reason = f"{regime_text}且现价高于 flip {abs(dist):.2f}%，对冲托底偏多"
+    else:
+        label, direction = "中性", 0.0
+        side = "高于" if dist > 0 else "低于" if dist < 0 else "接近"
+        reason = f"{regime_text}但现价{side} flip {abs(dist):.2f}%，方向未确认"
+
+    return {
+        "label": label, "icon": GEX_BIAS_ICONS[label], "dir": round(direction, 3),
+        "ok": True, "reason": reason,
     }
 
 

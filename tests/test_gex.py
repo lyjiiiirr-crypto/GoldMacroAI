@@ -231,6 +231,7 @@ class GexReportTests(unittest.TestCase):
         self.snap = {
             "source": "manual", "symbol": "GLD", "as_of_date": "2026-11-23",
             "spot": 322.87, "net_gex": 1.85e8, "gamma_flip": 318.4,
+            "distance_pct": 1.4,
             "call_wall": 330.0, "put_wall": 315.0, "regime": "正Gamma",
             "summary": "净GEX +185M/1%，flip 318.40，现价高于 flip 1.40%；上涨中卖出对冲。",
             "payload": {
@@ -247,6 +248,32 @@ class GexReportTests(unittest.TestCase):
         self.assertIn("正Gamma", text)
         self.assertIn("318.40", text)
         self.assertIn("非交易信号", text)
+
+    def test_render_gex_lines_adds_bias_label_and_reason(self):
+        text = "\n".join(render_gex_lines([self.snap]))
+        self.assertIn("🟢偏多", text)
+        self.assertIn("现价高于 flip 1.40%", text)
+        self.assertIn("未回测", text)
+        self.assertIn("仅作背景", text)
+
+    def test_render_gex_lines_missing_distance_is_neutral(self):
+        row = dict(self.snap)
+        row.pop("distance_pct")
+        text = "\n".join(render_gex_lines([row]))
+        self.assertIn("⚪中性", text)
+        self.assertIn("flip 距离未知，未判定偏向", text)
+
+    def test_render_gex_lines_does_not_mutate_row_or_macro_score(self):
+        from analysis.macro_score import compute_score
+
+        row = dict(self.snap)
+        before = dict(row)
+        score = compute_score({})
+        total = score.total
+        render_gex_lines([row])
+        render_daily_report(score, {"text": "测试", "source": "rule"}, {"gex": [row]})
+        self.assertEqual(row, before)
+        self.assertEqual(score.total, total)
 
     def test_render_gex_lines_empty_state(self):
         self.assertIn("暂无 GEX", "\n".join(render_gex_lines([])))

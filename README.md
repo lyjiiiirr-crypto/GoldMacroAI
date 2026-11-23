@@ -198,7 +198,7 @@ python main.py --import-crt --date 2026-11-23 --crt-json crt_snapshot.json
 python main.py --import-polymarket --polymarket-json polymarket.json
 ```
 
-GEX 报告中会明确标注「Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算、非做市商真实库存、非交易信号」；`gex_snapshots` 表按（来源、标的、日期）幂等写入，人工导入与自动采集互不覆盖。
+GEX 报告中会明确标注「Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算、非做市商真实库存、非交易信号」。每条 GEX 快照还会按净 GEX 符号与现价相对 flip 的位置标注 `🟢偏多` / `🔴偏空` / `⚪中性` 并附简短理由；该标注同样**未回测、仅作背景、不参与宏观评分**。`gex_snapshots` 表按（来源、标的、日期）幂等写入，人工导入与自动采集互不覆盖。
 
 #### 技术面 × GEX 融合方向
 

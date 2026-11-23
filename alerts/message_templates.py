@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from analysis.gold_bias import DISCLAIMER, bias_label, score_bar
-from analysis.tech_gex_fusion import fuse
+from analysis.tech_gex_fusion import fuse, gex_bias
 from config import CHINA_TIMEZONE_OFFSET_HOURS, SERIES
 
 ESC = html.escape
@@ -34,8 +34,13 @@ def render_gex_lines(gex: list[dict], *, limit: int = 2) -> list[str]:
         label = payload.get("label") or GEX_SYMBOL_LABELS.get(symbol, symbol)
         as_of = row.get("as_of_date") or payload.get("as_of") or ""
         regime = row.get("regime") or payload.get("regime") or ""
-        head = f"- {ESC(str(label))}（{ESC(str(as_of))}）：{ESC(str(regime))}"
+        bias = gex_bias(row)
+        head = (
+            f"- {ESC(str(label))}（{ESC(str(as_of))}）：{ESC(str(regime))} "
+            f"<b>{bias['icon']}{ESC(bias['label'])}</b>"
+        )
         lines.append(head)
+        lines.append("  " + ESC(bias["reason"]))
         summary = row.get("summary") or payload.get("summary") or ""
         if summary:
             lines.append("  " + ESC(str(summary)))
@@ -54,7 +59,10 @@ def render_gex_lines(gex: list[dict], *, limit: int = 2) -> list[str]:
             bits.append(f"Put墙 {float(put_wall):.2f}")
         if bits:
             lines.append("  " + ESC("；".join(bits)))
-    lines.append("  <i>来源：Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算，非做市商真实库存，非交易信号。</i>")
+    lines.append(
+        "  <i>偏向按净GEX符号与 flip 相对位置推导，未回测，仅作背景；"
+        "来源：Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算，非做市商真实库存，非交易信号。</i>"
+    )
     return lines
 
 
