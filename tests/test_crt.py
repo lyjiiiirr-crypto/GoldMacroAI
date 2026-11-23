@@ -7,7 +7,7 @@ from alerts.message_templates import render_crt_lines, render_daily_report, rend
 from alerts.telegram_bot import COMMANDS
 from analysis.macro_score import compute_score
 from data.crt import (
-    aggregate_4h, crt_snapshot, parse_yahoo_intraday, snapshot_from_data,
+    aggregate_4h, crt_snapshot, parse_tv_scan, parse_yahoo_intraday, snapshot_from_data,
 )
 from database.models import Database
 
@@ -106,6 +106,26 @@ class CrtMathTests(unittest.TestCase):
             crt_snapshot("GC=F", [bar(ts(20, 0), 1, 2, 1, 1.5)])
 
 
+class TradingViewCrtTests(unittest.TestCase):
+    def test_parse_tv_scan(self):
+        bar = parse_tv_scan(
+            {"data": [{"d": [100.0, 105.0, 98.0, 103.5]}]},
+            now_ts=ts(20, 3, 59),
+        )
+        self.assertIsNotNone(bar)
+        self.assertEqual(bar["ts"], ts(20, 4))
+        self.assertEqual(bar["time"][11:16], "04:00")
+        self.assertEqual(bar["open"], 100.0)
+        self.assertEqual(bar["high"], 105.0)
+        self.assertEqual(bar["low"], 98.0)
+        self.assertEqual(bar["close"], 103.5)
+
+    def test_parse_tv_scan_rejects_bad_payload(self):
+        self.assertIsNone(parse_tv_scan({}))
+        self.assertIsNone(parse_tv_scan({"data": [{"d": [1, 2, 3]}]}))
+        self.assertIsNone(parse_tv_scan({"data": [{"d": [1, None, 3, 4]}]}))
+
+
 class CrtImportTests(unittest.TestCase):
     def test_snapshot_from_chart_payload(self):
         bars = [
@@ -191,6 +211,12 @@ class CrtReportTests(unittest.TestCase):
         self.assertIn("均衡位", text)
         self.assertIn("LTF", text)
 
+    def test_execution_lines_include_point_distances(self):
+        self.snap["current_close"] = 95.0
+        text = "\n".join(render_execution_lines({"crt": [self.snap]}))
+        self.assertIn("距现价 6.00 点（上方）", text)   # 前高 101
+        self.assertIn("距现价 8.00 点（下方）", text)   # 前低 87
+
     def test_execution_lines_without_data_degrades(self):
         text = "\n".join(render_execution_lines({}))
         self.assertIn("暂无数据", text)
@@ -206,8 +232,8 @@ class CrtReportTests(unittest.TestCase):
 
     def test_execution_lines_reflect_actual_macro_bias(self):
         text = "\n".join(render_execution_lines({"crt": [self.snap]}, None, "中性震荡"))
-        self.assertIn("宏观中性震荡 ≠ 入场信号", text)
-        self.assertNotIn("宏观偏多 ≠ 入场信号", text)
+        self.assertIn("宏观（中性震荡）≠ 入场信号", text)
+        self.assertNotIn("宏观（偏多）≠ 入场信号", text)
 
     def test_daily_report_replaces_old_execution_reminder(self):
         report = render_daily_report(
@@ -217,6 +243,23 @@ class CrtReportTests(unittest.TestCase):
         self.assertIn("交易执行提醒（4H CRT → LTF 执行）", report)
         self.assertIn("高 101.00 / 低 87.00", report)
         self.assertNotIn("等待日线/周线结构确认", report)
+
+    def test_daily_report_marks_macro_bias_and_drops_fomc(self):
+        market = {
+            "DFII10": {"value": 2.1, "date": "2026-11-23", "delta": 0.12,
+                       "change_text": "5日 +12 bp", "stale": False},
+            "fedwatch": {"text": "下次会议加息概率上升", "change_pp": -5.0},
+            "fomc": {"documents": [{"url": "https://example.com", "doc_type": "Statement",
+                                    "doc_date": "2026-11-23"}]},
+            "crt": [self.snap],
+        }
+        report = render_daily_report(
+            compute_score({}), {"text": "测试", "source": "rule"}, market
+        )
+        self.assertIn("关键市场数据（对 XAUUSD 偏向）", report)
+        self.assertIn("XAUUSD 🔴偏空", report)   # 实际收益率上升
+        self.assertIn("XAUUSD 🔴偏空", report)   # FedWatch 转鹰
+        self.assertNotIn("FOMC 官方文件", report)
 
     def test_crt_lines_and_command_registered(self):
         text = "\n".join(render_crt_lines([self.snap]))

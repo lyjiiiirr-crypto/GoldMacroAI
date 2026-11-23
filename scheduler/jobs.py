@@ -303,9 +303,10 @@ def demo_market() -> tuple[dict, dict]:
             },
         ],
         "crt": [{
-            "source": "Yahoo Finance 公开行情（本地聚合 4H CRT）",
-            "symbol": "GC=F", "as_of": f"{today}T08:00:00+00:00",
-            "timeframe": "4h", "current_high": 3620.50, "current_low": 3580.20,
+            "source": "TradingView 公开行情（4H CRT）",
+            "symbol": "XAUUSD", "as_of": f"{today}T08:00:00+00:00",
+            "timeframe": "4h", "current_close": 3605.80,
+            "current_high": 3620.50, "current_low": 3580.20,
             "prev_high": 3610.00, "prev_low": 3575.40, "equilibrium": 3600.35,
             "body_pct": 62.0, "direction": "偏多", "swept_prev_high": False,
             "swept_prev_low": True, "scenario": "反转", "bias": "偏多",
@@ -313,7 +314,7 @@ def demo_market() -> tuple[dict, dict]:
             "summary": f"4H（UTC 08:00）高 3620.50 / 低 3580.20，实体 62% 偏多；"
                        f"前一根高 3610.00 / 低 3575.40；已扫前低（卖出流动性）；"
                        f"情景 反转（偏多）。",
-            "payload": {"label": "COMEX黄金期货", "as_of": f"{today}T08:00:00+00:00"},
+            "payload": {"label": "现货黄金 XAUUSD", "as_of": f"{today}T08:00:00+00:00"},
         }],
         "calendar": [],
     }

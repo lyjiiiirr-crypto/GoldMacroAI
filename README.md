@@ -15,7 +15,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 ## GitHub 云端定时部署
 
 - 仓库：<https://github.com/lyjiiiirr-crypto/GoldMacroAI>（Public）
-- `.github/workflows/gold-macro.yml`：每 4 小时（UTC）自动运行一次，也可在 Actions 页面点 **Run workflow** 手动触发。
+- `.github/workflows/gold-macro.yml`：每 4 小时自动运行，在 TradingView 4H K 线收线前 1 分钟（UTC 03:59 / 07:59 / ...）采集；GitHub 定时可能延迟，无法保证秒级精确，也可在 Actions 页面点 **Run workflow** 手动触发。
 - 所需 Secrets（Settings → Secrets and variables → Actions）：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`NTFY_TOPIC`。密钥只存在 GitHub Secrets，不进代码库。
 - 每次运行后历史数据库 `database/gold_macro.db` 会自动提交回仓库（`.gitignore` 默认忽略，工作流中强制添加）。
 - 修改代码后直接 `git push` 即可，GitHub Actions 会自动使用仓库里的 Secrets。
@@ -60,14 +60,14 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 技术面报告（本地自算） | Yahoo Finance 公开行情 `GC=F` 日线，自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
 | GEX 地图 / Gamma 翻转点 | Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），用 IV + 未平仓量按 Black-Scholes 本地估算 GEX、gamma flip 与对冲压力方向；延迟/近似值，**非交易信号、不参与宏观评分**，可人工导入 |
 | 技术面 × GEX 融合方向 | 技术面（SMA/RSI/MACD）定基础方向，GEX 通过现价与 gamma flip 的相对位置给出偏向并放大/削弱，输出**偏多 / 偏空 / 中性震荡**；写入日报、`/fusion` 可查，未回测、**不参与宏观评分** |
-| 4H CRT 高低点 | Yahoo 免费 1H 行情本地聚合为 UTC 对齐的 4H K 线，取每根高/低点作为流动性位；识别扫前高/前低与延续/反转情景，写入「交易执行提醒」，`/crt` 可查，未回测、**非交易信号** |
+| 4H CRT 高低点 | TradingView 公开行情 `OANDA:XAUUSD` 的 4H K 线（scanner 免费接口），取每根高/低点作为流动性位；接口失败时回退 Yahoo 1H 本地聚合。识别扫前高/前低与延续/反转，写入「交易执行提醒」，`/crt` 可查，未回测、**非交易信号** |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
 | 时效性控制 | 每条数据记录观测日期；过期数据不参与打分，并降低置信度 |
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
 | 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/fusion` `/crt` `/bias` `/report` `/help` |
-| 定时任务 | GitHub Actions 每 4 小时运行，历史数据库自动保存回仓库 |
+| 定时任务 | GitHub Actions 每 4 小时、在 TradingView 4H 收线前 1 分钟（UTC 03:59 等）运行，历史数据库自动保存回仓库 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
 **V1.0 仍不做/限制**：CME 官方 FedWatch API（收费，本项目使用社区公开归档，非官方承诺）、Trading Central 授权研报（商业/B2B 产品，无可验证免费公开源，本项目改用公开行情本地自算并明确标注非官方研报）、市场一致预期（BLS/BEA 不发布，故不伪造"意外值"，仍可人工导入）、秒级行情监控、交易结构识别（V2.0）。
@@ -85,7 +85,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
 | 黄金技术面 | Yahoo Finance 公开行情 `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
 | GEX / Gamma flip | [Cboe 免费延迟期权报价](https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json) `GLD`、`SPY`（`GEX_SYMBOLS` 可配置） | 免费公开接口，约 15 分钟延迟，单次请求返回整条链（含未平仓量 / IV / gamma）。Yahoo 免费链现网未平仓量常为 0，故改用 Cboe；本项目用 IV 本地按 Black-Scholes 估算（IV 缺失时回退 Cboe gamma）。GEX = Γ×OI×100×S²×0.01（看涨为正、看跌为负），flip 由整条链重定价找净 GEX 过零点。**数据延迟、未含真实做市商库存，仅作研究背景，非交易信号** |
-| 4H CRT 高低点 | Yahoo Finance 公开行情 `GC=F` 的 60m 数据（`CRT_SYMBOLS` / `YHOO_CRT_URL` 可配置） | Yahoo 无原生 4h interval，取 1H 行情按 UTC 4 小时桶本地聚合，只使用已收盘 K 线；高/低点视为流动性，检测是否扫前根高低并判定延续/反转。**近似值，未回测，非交易信号** |
+| 4H CRT 高低点 | TradingView 公开行情 `OANDA:XAUUSD`（`TV_CRT_SYMBOL` / `TV_CRT_URL` 可配置） | 使用 scanner 的 `open/high/low/close|240` 字段，采集时点在 4H 收线前 1 分钟；失败时回退 Yahoo `XAUUSD=X` 1H 聚合（`YHOO_CRT_URL`）。高/低点视为流动性，检测是否扫前根高低并判定延续/反转。**近似值，未回测，非交易信号** |
 
 ## 目录结构
 
@@ -185,7 +185,7 @@ python main.py --import-gex --date 2026-11-23 --gex-json gex_snapshot.json
 # 原始期权链响应（Cboe data.options 或 Yahoo optionChain.result[0]）→ 本地计算 GEX / flip
 python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rate 0.04
 
-# 4H CRT 高低点：可直接给高低点，也可传 Yahoo chart 响应 / 1H K 线由本地聚合
+# 4H CRT 高低点：可直接给高低点，也可传 Yahoo chart 响应 / 1H K 线由本地聚合（自动采集优先 TradingView）
 python main.py --import-crt --date 2026-11-23 --crt-json crt_snapshot.json
 # crt_snapshot.json 示例：{"current_high":3636.4,"current_low":3602.9,
 #   "prev_high":3629.6,"prev_low":3567.8,"current_open":3605,"current_close":3630}
@@ -249,7 +249,7 @@ python main.py --listen
    - `TELEGRAM_CHAT_ID`
    - （可选）`CLOUD_AI_BASE_URL` / `CLOUD_AI_API_KEY` / `CLOUD_AI_MODEL`
 4. 进入 `Actions`，手动运行 `GoldMacroAI scheduled run` 验证。
-5. 之后每 4 小时（UTC）自动运行一次；数据库提交回仓库。
+5. 之后每 4 小时自动运行（TradingView 4H 收线前 1 分钟，UTC 03:59 等）；数据库提交回仓库。
 
 **云端注意**：GitHub Actions 不是常驻服务器，定时任务可能延迟；本地 Ollama 地址 `localhost:11434` 云端访问不到，云端默认使用规则分析。免费额度（私有仓库每月 2000 分钟 Actions）需自行确认。
 

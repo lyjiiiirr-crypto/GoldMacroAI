@@ -144,14 +144,18 @@ YHOO_TECH_URL = env(
 TECHNICAL_SYMBOLS = tuple(
     s.strip() for s in env("TECHNICAL_SYMBOLS", "GC=F").split(",") if s.strip()
 )
-# 4H CRT（蜡烛区间理论）：用 Yahoo 免费 1H 行情本地聚合 4H K 线，取每根高低点作为流动性位
-# Yahoo 不提供原生 4h interval，故取 60m 后按 UTC 4 小时桶聚合
+# 4H CRT（蜡烛区间理论）：优先 TradingView 公开 scanner 行情，失败回退 Yahoo 1H 聚合
+TV_CRT_URL = env(
+    "TV_CRT_URL",
+    "https://scanner.tradingview.com/global/scan",
+)
+TV_CRT_SYMBOL = env("TV_CRT_SYMBOL", "OANDA:XAUUSD")
 YHOO_CRT_URL = env(
     "YHOO_CRT_URL",
     "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1mo&interval={interval}",
 )
 CRT_SYMBOLS = tuple(
-    s.strip() for s in env("CRT_SYMBOLS", "GC=F").split(",") if s.strip()
+    s.strip() for s in env("CRT_SYMBOLS", "XAUUSD").split(",") if s.strip()
 )
 # GEX / Gamma flip：Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），延迟近似估算
 # Cboe 单次请求即返回整条链（含 open_interest / gamma / iv），比 Yahoo 免费链更完整

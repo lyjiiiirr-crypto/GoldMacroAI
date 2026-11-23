@@ -96,7 +96,7 @@ def render_crt_lines(crt: list[dict], *, limit: int = 2) -> list[str]:
         )
         if row.get("summary"):
             lines.append("  " + ESC(str(row["summary"])))
-    lines.append("  <i>来源：Yahoo Finance 公开 1H 行情本地聚合 4H，未回测，非交易信号。</i>")
+    lines.append("  <i>来源：TradingView 公开行情优先，Yahoo Finance 公开行情回退；未回测，非交易信号。</i>")
     return lines
 
 
@@ -124,25 +124,49 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
         clock = as_of[11:16] if len(as_of) >= 16 else as_of
         scenario = str(pick("scenario") or "待确认")
         bias = str(pick("bias") or "中性")
+        close = pick("current_close")
+        try:
+            close_value = float(close)
+        except (TypeError, ValueError):
+            close_value = None
+
+        def dist(value):
+            if value is None or close_value is None:
+                return ""
+            try:
+                diff = float(value) - close_value
+            except (TypeError, ValueError):
+                return ""
+            side = "上方" if diff >= 0 else "下方"
+            return f"，距现价 {abs(diff):.2f} 点（{side}）"
+
+        cur_high, cur_low = pick("current_high"), pick("current_low")
+        prev_high, prev_low = pick("prev_high"), pick("prev_low")
         lines.append(
-            f"- 4H 结构（UTC {ESC(clock)}）：高 {num(pick('current_high'))} / "
-            f"低 {num(pick('current_low'))}，情景 {ESC(scenario)}（{ESC(bias)}）"
+            f"- 4H 结构（UTC {ESC(clock)}）：高 {num(cur_high)} / "
+            f"低 {num(cur_low)}，情景 {ESC(scenario)}（{ESC(bias)}）"
         )
         swept = ("本根已扫前低（卖出流动性）" if pick("swept_prev_low")
                  else "本根已扫前高（买入流动性）" if pick("swept_prev_high")
                  else "本根未扫前根高低点")
         lines.append(
-            f"- 流动性位：前根高 {num(pick('prev_high'))} / 低 {num(pick('prev_low'))}；{ESC(swept)}"
+            f"- 高低点：当前高 {num(cur_high)}{dist(cur_high)} / "
+            f"低 {num(cur_low)}{dist(cur_low)}"
+        )
+        lines.append(
+            f"- 阻力支撑：前高 {num(prev_high)}{dist(prev_high)} / "
+            f"前低 {num(prev_low)}{dist(prev_low)}；{ESC(swept)}"
         )
         equity = pick("equilibrium")
         if equity is not None:
-            lines.append(f"- CRT 均衡位：{num(equity)}（中轴，回测不破才确认结构）")
+            lines.append(f"- CRT 均衡位：{num(equity)}{dist(equity)}（中轴，回测不破才确认结构）")
         target, stop = pick("target"), pick("stop_ref")
         if target is not None and stop is not None:
             side = "高" if bias == "偏多" else "低"
             opposite = "低" if bias == "偏多" else "高"
             lines.append(
-                f"- 结构参考：目标前根{side} {num(target)}，止损参考前根{opposite} {num(stop)}"
+                f"- 结构参考：目标前根{side} {num(target)}{dist(target)}，"
+                f"止损参考前根{opposite} {num(stop)}{dist(stop)}"
                 "（仅为结构位，非挂单建议）"
             )
     else:
@@ -160,9 +184,34 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
         )
     lines += [
         "- LTF：切 2M/5M，等 inducement 清扫 + 未缓解 order flow 回测，不追价",
-        f"- 宏观{macro_bias or '方向'} ≠ 入场信号；止损先行，单笔风险可控",
+        f"- 宏观（{macro_bias or '方向'}）≠ 入场信号；止损先行，单笔风险可控",
     ]
     return lines
+
+
+def _xau_bias_mark(bias: str) -> str:
+    return {"偏多": "🟢偏多", "偏空": "🔴偏空"}.get(bias, "⚪中性")
+
+
+def _macro_xau_bias(key: str, item: dict) -> str:
+    """根据宏观数据的变化方向给出对 XAUUSD 的简化偏向（仅报告标注）。"""
+    delta = item.get("delta") or item.get("pct") or 0.0
+    pct = item.get("pct") or 0.0
+    try:
+        delta, pct = float(delta), float(pct)
+    except (TypeError, ValueError):
+        delta, pct = 0.0, 0.0
+    if key in {"DFII10", "DGS2", "DGS10", "DXY", "DTWEXBGS", "DFF"}:
+        if delta > 0 or pct > 0:
+            return "偏空"
+        if delta < 0 or pct < 0:
+            return "偏多"
+    if key == "T10YIE":
+        if delta > 0:
+            return "偏空"
+        if delta < 0:
+            return "偏多"
+    return "中性"
 
 
 def render_daily_report(score, analysis: dict, market: dict | None = None) -> str:
@@ -176,58 +225,72 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
         f"<b>{score.total:+.1f} / 100</b>  置信度 {score.confidence:.0%}",
         f"<code>{score_bar(score.total)}</code>",
         "",
-        "<b>关键市场数据</b>",
+        "<b>关键市场数据（对 XAUUSD 偏向）</b>",
     ]
     for series_id, label in (
-        ("DFII10", "10Y实际收益率"), ("DGS2", "2Y国债收益率"),
-        ("DGS10", "10Y国债收益率"), ("DXY", "美元指数 DXY"),
-        ("DTWEXBGS", "美元广义指数"), ("T10YIE", "10Y通胀预期"),
-        ("DFF", "有效联邦基金利率"),
+        ("DFII10", "10Y实际收益率"), ("DXY", "DXY"),
+        ("T10YIE", "10Y通胀预期"), ("DFF", "联邦基金利率"),
     ):
         item = market.get(series_id)
         if not item or item.get("value") is None:
             continue
         unit = SERIES[series_id]["unit"]
-        delta = item.get("delta")
+        direction = _macro_xau_bias(series_id, item)
         delta_text = f"（{item['change_text']}）" if item.get("change_text") else ""
-        stale = " ⚠️数据过期" if item.get("stale") else ""
-        lines.append(f"- {label}：{item['value']:.2f}{unit}{delta_text}{stale}")
+        stale = " ⚠️过期" if item.get("stale") else ""
+        lines.append(
+            f"- {label} {item['value']:.2f}{unit}{delta_text} → XAUUSD {_xau_bias_mark(direction)}{stale}"
+        )
     if not any(market.get(k) for k in SERIES):
         lines.append("- 暂无 FRED 数据（配置 FRED_API_KEY 后自动采集）")
 
     fed = market.get("fedwatch")
-    lines += ["", "<b>美联储政策预期</b>", f"- {ESC(fed.get('text', '无 FedWatch 快照')) if fed else '无 FedWatch 快照（自动采集失败时可用 --import-fedwatch 录入）'}"]
-
-    fomc = market.get("fomc") or {}
-    if fomc:
-        lines += ["", "<b>FOMC 官方文件</b>"]
-        if fomc.get("next_meeting"):
-            lines.append(f"- 下次会议：{ESC(str(fomc['next_meeting']))}（FedWatch 隐含）")
-        for doc in (fomc.get("documents") or [])[:3]:
-            lines.append(
-                f'- <a href="{ESC(doc["url"])}">{ESC(doc["doc_type"])} '
-                f'{ESC(doc["doc_date"])}</a>'
-            )
-
-    macro = market.get("macro") or []
-    if macro:
-        lines += ["", "<b>美国宏观数据</b>"]
-        for item in macro[:6]:
-            stale = " ⚠️过期" if item.get("stale") else ""
-            lines.append(
-                f"- {ESC(item['name'])}：{item['value']:,.2f}{ESC(item['unit'])}"
-                f"（{ESC(item['change_text'])}，{ESC(item['date'])}）{stale}"
-            )
+    lines += ["", "<b>美联储政策预期</b>"]
+    if fed:
+        dovish = fed.get("change_pp") or fed.get("dovish_pp") or 0.0
+        try:
+            fed_bias = "偏多" if float(dovish) > 0 else "偏空" if float(dovish) < 0 else "中性"
+        except (TypeError, ValueError):
+            fed_bias = "中性"
+        lines.append(
+            f"- {ESC(fed.get('text', '无 FedWatch 快照'))} → XAUUSD {_xau_bias_mark(fed_bias)}"
+        )
+    else:
+        lines.append("- 无 FedWatch 快照（自动采集失败时可用 --import-fedwatch 录入）")
 
     events = market.get("events") or []
     if events:
         lines += ["", "<b>经济数据意外</b>"]
-        lines += [f"- {ESC(e['name'])}：实际 {e['actual']}，预期 {e['expected']}" for e in events[:3]]
+        for e in events[:3]:
+            surprise = e.get("surprise") or 0.0
+            try:
+                surprise = float(surprise)
+            except (TypeError, ValueError):
+                surprise = 0.0
+            name = str(e.get("name") or "")
+            if "CPI" in name or "PCE" in name:
+                bias = "偏多" if surprise < 0 else "偏空" if surprise > 0 else "中性"
+            elif "失业" in name or "非农" in name or "NFP" in name:
+                bias = "偏空" if surprise > 0 else "偏多" if surprise < 0 else "中性"
+            else:
+                bias = "中性"
+            lines.append(
+                f"- {ESC(e['name'])}：实际 {e['actual']}，预期 {e['expected']}"
+                f" → XAUUSD {_xau_bias_mark(bias)}"
+            )
 
     flows = market.get("flows") or []
     if flows:
         lines += ["", "<b>资金流向</b>"]
-        lines += [f"- {ESC(f['name'])}：{f['text']}" for f in flows[:3]]
+        for f in flows[:3]:
+            try:
+                change = float(f.get("change") or 0.0)
+            except (TypeError, ValueError):
+                change = 0.0
+            bias = "偏多" if change > 0 else "偏空" if change < 0 else "中性"
+            lines.append(
+                f"- {ESC(f['name'])}：{f['text']} → XAUUSD {_xau_bias_mark(bias)}"
+            )
 
     technical = market.get("technical") or []
     if technical:
