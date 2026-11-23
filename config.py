@@ -1,0 +1,136 @@
+"""GoldMacroAI V1.0 全局配置。
+
+密钥只从环境变量或项目根目录的 .env 读取，切勿提交到仓库。
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = Path(os.getenv("GOLD_MACRO_DB", str(BASE_DIR / "database" / "gold_macro.db")))
+
+
+def load_dotenv(path: Path | str | None = None) -> None:
+    """极简 .env 读取器：不覆盖已有环境变量，无需第三方依赖。"""
+    path = Path(path) if path else BASE_DIR / ".env"
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv()
+
+
+def _configure_system_proxy() -> None:
+    """Windows 下自动采用系统代理，避免本机网络访问 Telegram / FRED 失败。
+
+    只使用标准库；已在环境变量中显式设置代理时不覆盖。非 Windows 平台跳过。
+    """
+    if os.name != "nt" or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy"):
+        return
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+        ) as key:
+            enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            server, _ = winreg.QueryValueEx(key, "ProxyServer")
+        if not enabled or not server:
+            return
+        server = str(server).strip()
+        if "=" in server:  # 形如 http=host:port;https=host:port
+            mapping = dict(
+                part.split("=", 1) for part in server.split(";") if "=" in part
+            )
+            http = mapping.get("http")
+            https = mapping.get("https") or http
+        else:
+            http = https = server
+        if https and "://" not in https:
+            https = "http://" + https
+        if http and "://" not in http:
+            http = "http://" + http
+        if https:
+            os.environ["HTTPS_PROXY"] = https
+        if http:
+            os.environ["HTTP_PROXY"] = http
+    except Exception:  # noqa: BLE001 - 代理探测失败不应影响程序启动
+        pass
+
+
+_configure_system_proxy()
+
+
+def env(name: str, default: str = "") -> str:
+    return os.getenv(name, default)
+
+
+# ---- 数据源密钥 ----
+FRED_API_KEY = env("FRED_API_KEY")
+FRED_BASE_URL = env("FRED_BASE_URL", "https://api.stlouisfed.org/fred/series/observations")
+# 无 API Key 时的公开 CSV 回退接口（FRED 官方图表数据，无需注册）
+FRED_CSV_BASE_URL = env("FRED_CSV_BASE_URL", "https://fred.stlouisfed.org/graph/fredgraph.csv")
+
+# ---- Telegram ----
+TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = env("TELEGRAM_CHAT_ID")
+TELEGRAM_API_BASE = env("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
+# 免注册推送备选：ntfy.sh（订阅 https://ntfy.sh/<你的topic> 即可收到）
+NTFY_TOPIC = env("NTFY_TOPIC")
+NTFY_BASE_URL = env("NTFY_BASE_URL", "https://ntfy.sh").rstrip("/")
+ALERT_COOLDOWN_HOURS = int(env("ALERT_COOLDOWN_HOURS", "12"))
+
+# ---- AI 引擎：本地 Ollama 优先，兼容 OpenAI 格式的云端接口备用 ----
+OLLAMA_ENABLED = env("OLLAMA_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+OLLAMA_HOST = env("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_MODEL = env("OLLAMA_MODEL", "qwen2.5:3b")
+OLLAMA_TIMEOUT = int(env("OLLAMA_TIMEOUT", "60"))
+CLOUD_AI_BASE_URL = env("CLOUD_AI_BASE_URL").rstrip("/")
+CLOUD_AI_API_KEY = env("CLOUD_AI_API_KEY")
+CLOUD_AI_MODEL = env("CLOUD_AI_MODEL", "qwen/qwen3-8b:free")
+CLOUD_AI_TIMEOUT = int(env("CLOUD_AI_TIMEOUT", "30"))
+
+# ---- FRED 序列 ----
+SERIES = {
+    "DFII10": {"name": "10年期实际收益率", "unit": "%", "stale_days": 10},
+    "DGS2": {"name": "2年期国债收益率", "unit": "%", "stale_days": 10},
+    "DGS10": {"name": "10年期国债收益率", "unit": "%", "stale_days": 10},
+    "T10YIE": {"name": "10年期通胀预期", "unit": "%", "stale_days": 10},
+    "DTWEXBGS": {"name": "美元广义贸易加权指数", "unit": "点", "stale_days": 10},
+    "DFF": {"name": "有效联邦基金利率", "unit": "%", "stale_days": 10},
+}
+
+# ---- 100 分制评分权重 ----
+WEIGHTS = {
+    "fed_policy": 25,   # 利率预期变化（FedWatch 人工快照）
+    "real_rate": 25,    # DFII10 变化
+    "dollar": 20,       # DTWEXBGS 变化（非 ICE DXY）
+    "econ_data": 15,    # CPI / PCE / NFP 意外值（人工导入）
+    "flows": 15,        # COT / ETF 资金流向（人工导入）
+}
+
+# 模块达到满信号所需的变动幅度（可调，未回测）
+FULL_SCALE = {
+    "fed_policy_pp": 15.0,   # 降息概率变化 15 个百分点
+    "real_rate_bp": 20.0,    # 实际收益率变化 20 个基点
+    "dollar_pct": 1.5,       # 美元指数变化 1.5%
+}
+
+GRADES = [
+    (60, "强烈偏多"),
+    (25, "温和偏多"),
+    (-24, "中性震荡"),
+    (-60, "温和偏空"),
+]
+
+CHINA_TIMEZONE_OFFSET_HOURS = 8

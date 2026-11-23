@@ -1,0 +1,4 @@
+# GoldMacroAI V1.0 核心运行（采集/评分/Telegram/AI接口）只用 Python 3.10+ 标准库。
+# 下面两项为可选增强：不安装也能运行 main.py；安装后行为不变。
+requests>=2.31.0
+python-dotenv>=1.0.0

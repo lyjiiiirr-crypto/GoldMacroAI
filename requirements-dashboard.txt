@@ -1,0 +1,4 @@
+# 可选：本地宏观仪表盘
+-r requirements.txt
+streamlit>=1.30.0
+plotly>=5.18.0
