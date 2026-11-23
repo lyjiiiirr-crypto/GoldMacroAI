@@ -11,6 +11,7 @@
   python main.py --import-technical-report --summary "..." --bias 偏多 --date 2026-11-23
    python main.py --import-gex --gex-json gex_snapshot.json
    python main.py --import-crt --crt-json crt_snapshot.json
+   python main.py --import-polymarket --polymarket-json polymarket.json
    python main.py --listen           # 本地轮询 Telegram 命令
 """
 from __future__ import annotations
@@ -151,6 +152,8 @@ def parse_args() -> argparse.Namespace:
                         help="录入 GEX/Gamma flip 快照（支持 --gex-json 文件或 JSON 字符串）")
     action.add_argument("--import-crt", action="store_true",
                         help="录入 4H CRT 高低点快照（支持 --crt-json 文件或 JSON 字符串）")
+    action.add_argument("--import-polymarket", action="store_true",
+                        help="录入 Polymarket 利率预测（支持 --polymarket-json 文件或 JSON 字符串）")
     action.add_argument("--setup-ntfy", action="store_true", help="生成免注册 ntfy.sh 推送主题并写入 .env")
     action.add_argument("--telegram-id", action="store_true", help="用 Bot Token 查询你的 Telegram chat_id")
     parser.add_argument("--no-collect", action="store_true", help="跳过 FRED 联网，仅用本地缓存")
@@ -182,7 +185,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gex-json", default="",
                         help="GEX 快照 JSON 字符串或 .json 文件路径（快照结构或 Yahoo 期权链响应）")
     parser.add_argument("--crt-json", default="",
-                        help="CRT 快照 JSON 字符串或 .json 文件路径（高低点 / Yahoo chart / 1H K 线）")
+                        help="CRT 快照 JSON 字符串或 .json 文件路径（三根 K 线 / Yahoo chart / 1H K 线）")
+    parser.add_argument("--polymarket-json", default="",
+                        help="Polymarket 利率预测 JSON 字符串或 .json 文件路径（Gamma 响应 / 市场列表 / 快照）")
     parser.add_argument("--rate", type=float, default=0.0,
                         help="导入原始期权链时使用的无风险利率，默认 0")
     parser.add_argument("--token", help="Telegram Bot Token（仅 --telegram-id 使用）")
@@ -347,6 +352,35 @@ def main() -> int:
         print(f"CRT 快照已保存：{crt_symbol} {snap['as_of']}"
               f"（高 {snap['current_high']:.2f} / 低 {snap['current_low']:.2f}，"
               f"{snap['scenario']}，来源 {crt_source}）")
+        return 0
+    if args.import_polymarket:
+        if not args.polymarket_json:
+            print("需要 --polymarket-json（Gamma 响应 / 市场列表 / 快照 JSON 文件或字符串）")
+            return 2
+        try:
+            data = load_json_object(args.polymarket_json)
+        except (OSError, ValueError) as exc:
+            print(f"Polymarket JSON 解析失败：{exc}")
+            return 2
+        from data.polymarket import snapshot_from_data
+
+        try:
+            snap = snapshot_from_data(data)
+        except (ValueError, KeyError, TypeError) as exc:
+            print(f"Polymarket 快照构造失败：{exc}")
+            return 2
+        poly_source = args.source if args.source != "manual" else str(
+            snap.get("source") or "manual")
+        top = (snap.get("markets") or [{}])[0]
+        db.upsert_polymarket_snapshot(
+            source=poly_source,
+            as_of_date=str(snap.get("as_of") or args.date or date.today().isoformat())[:10],
+            question=snap.get("text"),
+            yes_probability=top.get("yes_probability"),
+            volume=top.get("volume"),
+            payload=snap, raw_json=json.dumps(data, ensure_ascii=False),
+        )
+        print(f"Polymarket 利率预测已保存：{snap.get('text')}（来源 {poly_source}）")
         return 0
     if args.setup_ntfy:
         topic = f"goldmacroai-{uuid.uuid4().hex[:12]}"

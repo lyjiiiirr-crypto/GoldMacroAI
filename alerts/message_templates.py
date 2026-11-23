@@ -76,34 +76,11 @@ def render_fusion_lines(fusion: dict) -> list[str]:
 
 
 def render_crt_lines(crt: list[dict], *, limit: int = 2) -> list[str]:
-    """渲染 4H CRT 高低点摘要（/crt 命令用，日报在执行提醒中引用）。"""
-    lines = ["<b>4H CRT 高低点（UTC 对齐，近似）</b>"]
+    """渲染 4H CRT 三根结构摘要（/crt 命令用，日报在执行提醒中引用）。"""
+    lines = ["<b>4H CRT 三根结构（UTC 02/06/... 收线，近似）</b>"]
     if not crt:
         lines.append("  - 暂无 CRT 数据（运行 --sync-only 或 --import-crt 导入）")
         return lines
-    for row in crt[:limit]:
-        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-        symbol = str(row.get("symbol") or payload.get("symbol") or "")
-        label = payload.get("label") or row.get("symbol") or symbol
-        as_of = str(row.get("as_of") or payload.get("as_of") or "")[:16]
-        head = f"- {ESC(str(label))}（{ESC(as_of)}）：{ESC(str(row.get('scenario') or '待确认'))}"
-        lines.append(head)
-        lines.append(
-            f"  当前 4H 高 {float(row.get('current_high') or 0):.2f} / "
-            f"低 {float(row.get('current_low') or 0):.2f}；"
-            f"前根 高 {float(row.get('prev_high') or 0):.2f} / "
-            f"低 {float(row.get('prev_low') or 0):.2f}"
-        )
-        if row.get("summary"):
-            lines.append("  " + ESC(str(row["summary"])))
-    lines.append("  <i>来源：TradingView 公开行情优先，Yahoo Finance 公开行情回退；未回测，非交易信号。</i>")
-    return lines
-
-
-def render_execution_lines(market: dict, fusion: dict | None = None,
-                           macro_bias: str | None = None) -> list[str]:
-    """补全交易执行提醒：4H CRT 定结构与关键位，2M/5M 才做执行。"""
-    lines = ["<b>交易执行提醒（4H CRT → LTF 执行）</b>"]
 
     def num(value, fallback: str = "—") -> str:
         try:
@@ -111,7 +88,83 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
         except (TypeError, ValueError):
             return fallback
 
+    def signed(value) -> str:
+        try:
+            return f"{float(value):+.2f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    for row in crt[:limit]:
+        data = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+
+        def pick(key, default=None):
+            value = row.get(key)
+            return value if value is not None else data.get(key, default)
+
+        label = pick("label") or row.get("symbol") or ""
+        as_of = str(pick("as_of") or "")[:16]
+        lines.append(
+            f"- {ESC(str(label))}（{ESC(as_of)}）：{ESC(str(pick('scenario') or '待确认'))}"
+        )
+        lines.append(
+            f"  P1 区间 高 {num(pick('range_high', pick('prev_high')))}"
+            f" / 低 {num(pick('range_low', pick('prev_low')))}（阻力/支撑）"
+        )
+        lines.append(
+            f"  P2 扫荡 高 {num(pick('sweep_high'))}"
+            f"（距阻力 {signed(pick('dist_sweep_high_to_resistance'))} 点）"
+            f" / 低 {num(pick('sweep_low'))}"
+            f"（距支撑 {signed(pick('dist_sweep_low_to_support'))} 点）"
+        )
+        lines.append(
+            f"  P3 扩张 高 {num(pick('current_high'))}"
+            f"（距阻力 {signed(pick('dist_high_to_resistance'))} 点）"
+            f" / 低 {num(pick('current_low'))}"
+            f"（距支撑 {signed(pick('dist_low_to_support'))} 点）"
+        )
+        if pick("target") is not None and pick("stop_ref") is not None:
+            lines.append(
+                f"  目标（P1 远端）{num(pick('target'))}；"
+                f"止损参考（P2 影线外）{num(pick('stop_ref'))}"
+            )
+        if pick("summary"):
+            lines.append("  " + ESC(str(pick("summary"))))
+    lines.append("  <i>来源：TradingView 公开行情优先，Yahoo Finance 公开行情回退；未回测，非交易信号。</i>")
+    return lines
+
+
+def _beijing_clock(value) -> str:
+    """把 UTC ISO 时间转成北京时间 HH:MM（用于标注 4H 收线时刻）。"""
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.astimezone(
+            timezone(timedelta(hours=CHINA_TIMEZONE_OFFSET_HOURS))
+        ).strftime("%H:%M")
+    except (TypeError, ValueError):
+        return str(value or "")[11:16]
+
+
+def render_execution_lines(market: dict, fusion: dict | None = None,
+                           macro_bias: str | None = None) -> list[str]:
+    """交易执行提醒：4H 三根 CRT 结构定关键位，4H/15M LTF 参与 P2 扫荡。"""
+    lines = ["<b>交易执行提醒（4H CRT 三根结构 → 4H/15M 执行）</b>"]
+
+    def num(value, fallback: str = "—") -> str:
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return fallback
+
+    def signed(value) -> str:
+        try:
+            return f"{float(value):+.2f}"
+        except (TypeError, ValueError):
+            return "—"
+
     crt = market.get("crt") or []
+    chart_ready = bool(crt)
     if crt:
         row = crt[0]
         data = row.get("payload") if isinstance(row.get("payload"), dict) else {}
@@ -120,58 +173,45 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
             value = row.get(key)
             return value if value is not None else data.get(key, default)
 
-        as_of = str(pick("as_of") or "")
-        clock = as_of[11:16] if len(as_of) >= 16 else as_of
         scenario = str(pick("scenario") or "待确认")
         bias = str(pick("bias") or "中性")
-        close = pick("current_close")
-        try:
-            close_value = float(close)
-        except (TypeError, ValueError):
-            close_value = None
-
-        def dist(value):
-            if value is None or close_value is None:
-                return ""
-            try:
-                diff = float(value) - close_value
-            except (TypeError, ValueError):
-                return ""
-            side = "上方" if diff >= 0 else "下方"
-            return f"，距现价 {abs(diff):.2f} 点（{side}）"
-
+        range_high = pick("range_high", pick("prev_high"))
+        range_low = pick("range_low", pick("prev_low"))
+        sweep_high, sweep_low = pick("sweep_high"), pick("sweep_low")
         cur_high, cur_low = pick("current_high"), pick("current_low")
-        prev_high, prev_low = pick("prev_high"), pick("prev_low")
         lines.append(
-            f"- 4H 结构（UTC {ESC(clock)}）：高 {num(cur_high)} / "
-            f"低 {num(cur_low)}，情景 {ESC(scenario)}（{ESC(bias)}）"
-        )
-        swept = ("本根已扫前低（卖出流动性）" if pick("swept_prev_low")
-                 else "本根已扫前高（买入流动性）" if pick("swept_prev_high")
-                 else "本根未扫前根高低点")
-        lines.append(
-            f"- 高低点：当前高 {num(cur_high)}{dist(cur_high)} / "
-            f"低 {num(cur_low)}{dist(cur_low)}"
+            f"- 4H 结构（北京 {ESC(_beijing_clock(pick('as_of')))} 收线）："
+            f"{ESC(scenario)}（{ESC(bias)}）"
         )
         lines.append(
-            f"- 阻力支撑：前高 {num(prev_high)}{dist(prev_high)} / "
-            f"前低 {num(prev_low)}{dist(prev_low)}；{ESC(swept)}"
+            f"- P1 区间（阻力/支撑）：高 {num(range_high)} / 低 {num(range_low)}"
         )
-        equity = pick("equilibrium")
-        if equity is not None:
-            lines.append(f"- CRT 均衡位：{num(equity)}{dist(equity)}（中轴，回测不破才确认结构）")
+        side = str(pick("sweep_side") or "")
+        if side:
+            lines.append(
+                f"- P2 扫{side}并收回区间：高 {num(sweep_high)}"
+                f"（距阻力 {signed(pick('dist_sweep_high_to_resistance'))} 点）"
+                f" / 低 {num(sweep_low)}"
+                f"（距支撑 {signed(pick('dist_sweep_low_to_support'))} 点）"
+            )
+        lines.append(
+            f"- P3 高低点距关键位：高点距阻力 "
+            f"{signed(pick('dist_high_to_resistance'))} 点，"
+            f"低点距支撑 {signed(pick('dist_low_to_support'))} 点"
+        )
         target, stop = pick("target"), pick("stop_ref")
         if target is not None and stop is not None:
-            side = "高" if bias == "偏多" else "低"
-            opposite = "低" if bias == "偏多" else "高"
             lines.append(
-                f"- 结构参考：目标前根{side} {num(target)}{dist(target)}，"
-                f"止损参考前根{opposite} {num(stop)}{dist(stop)}"
+                f"- 目标看 P1 远端 {num(target)}；止损参考 P2 影线外 {num(stop)}"
                 "（仅为结构位，非挂单建议）"
             )
+        equity = pick("equilibrium")
+        if equity is not None:
+            lines.append(f"- CRT 均衡位：{num(equity)}（区间中轴）")
     else:
+        chart_ready = False
         lines.append("- 4H CRT：暂无数据（运行 --sync-only 或 --import-crt 导入）")
-        lines.append("- 4H 结构：等待至少 2 根已收盘 4H K 线后再判断延续 / 反转")
+        lines.append("- 4H 结构：等待至少 3 根已收盘 4H K 线后再判断 P1/P2/P3")
 
     if fusion and fusion.get("direction"):
         try:
@@ -183,14 +223,32 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
             " → 与 4H 情景冲突时降级观望，先等结构确认"
         )
     lines += [
-        "- LTF：切 2M/5M，等 inducement 清扫 + 未缓解 order flow 回测，不追价",
+        "- LTF：4H/15M 参与 P2 扫荡，等收回 + 回测确认再入场，不追价",
         f"- 宏观（{macro_bias or '方向'}）≠ 入场信号；止损先行，单笔风险可控",
     ]
+    if chart_ready:
+        lines.append("  <i>附：3 根 4H K 线图见随后消息。</i>")
     return lines
 
 
 def _xau_bias_mark(bias: str) -> str:
     return {"偏多": "🟢偏多", "偏空": "🔴偏空"}.get(bias, "⚪中性")
+
+
+def _polymarket_bias(question: str, probability) -> str:
+    """按利率市场问法与 Yes 概率给出 XAUUSD 偏向（仅报告标注）。"""
+    try:
+        value = float(probability)
+    except (TypeError, ValueError):
+        return "中性"
+    if value < 50:
+        return "中性"
+    text = str(question or "").lower()
+    if any(key in text for key in ("cut", "降息", "ease", "lower")):
+        return "偏多"
+    if any(key in text for key in ("hike", "加息", "raise", "increase")):
+        return "偏空"
+    return "中性"
 
 
 def _macro_xau_bias(key: str, item: dict) -> str:
@@ -247,7 +305,9 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
     fed = market.get("fedwatch")
     lines += ["", "<b>美联储政策预期</b>"]
     if fed:
-        dovish = fed.get("change_pp") or fed.get("dovish_pp") or 0.0
+        dovish = fed.get("dovish_pp")
+        if dovish is None:
+            dovish = fed.get("change_pp") or 0.0
         try:
             fed_bias = "偏多" if float(dovish) > 0 else "偏空" if float(dovish) < 0 else "中性"
         except (TypeError, ValueError):
@@ -257,6 +317,28 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
         )
     else:
         lines.append("- 无 FedWatch 快照（自动采集失败时可用 --import-fedwatch 录入）")
+
+    poly = market.get("polymarket") or {}
+    for item in (poly.get("markets") or [])[:2]:
+        question = str(item.get("question") or "利率预测")
+        probability = item.get("yes_probability")
+        volume = item.get("volume")
+        vol_text = ""
+        try:
+            if volume and float(volume) > 0:
+                vol_text = f"，24h 成交额 ${float(volume):,.0f}"
+        except (TypeError, ValueError):
+            pass
+        bias = _polymarket_bias(question, probability)
+        prob_text = f"{float(probability):.1f}%" if probability is not None else "—"
+        lines.append(
+            f"- Polymarket「{ESC(question)}」Yes {prob_text}{vol_text}"
+            f" → XAUUSD {_xau_bias_mark(bias)}"
+        )
+    if poly:
+        lines.append(
+            f"  <i>{ESC(poly.get('disclaimer') or 'Polymarket 为公开预测市场赔率，非官方利率数据，仅作参考。')}</i>"
+        )
 
     events = market.get("events") or []
     if events:

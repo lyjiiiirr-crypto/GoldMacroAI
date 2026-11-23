@@ -2,9 +2,9 @@ name: GoldMacroAI scheduled run
 
 on:
   schedule:
-    # 在 TradingView 4H K 线收线前 1 分钟采集（UTC 03:59/07:59/...），
-    # 此时 scanner 的 4H OHLC 已接近最终值；GitHub 定时可能延迟，无法保证秒级精确
-    - cron: '59 3,7,11,15,19,23 * * *'
+    # TradingView 4H 收线为北京时间 10/14/18/22/02/06（UTC 02/06/10/14/18/22）
+    # 收线后 1 分钟内采集；GitHub 定时可能延迟，无法保证秒级精确
+    - cron: '1 2,6,10,14,18,22 * * *'
   workflow_dispatch:
 
 permissions:

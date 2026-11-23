@@ -21,6 +21,7 @@ TABLES = (
     "technical_reports",
     "gex_snapshots",
     "crt_snapshots",
+    "polymarket_snapshots",
     "reports",
     "alert_log",
 )
@@ -142,6 +143,17 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_crt_snapshots_lookup
                     ON crt_snapshots (as_of DESC, symbol);
+                CREATE TABLE IF NOT EXISTS polymarket_snapshots (
+                    source TEXT NOT NULL,
+                    as_of_date TEXT NOT NULL,
+                    question TEXT,
+                    yes_probability REAL,
+                    volume REAL,
+                    payload TEXT,
+                    raw_json TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (source, as_of_date)
+                );
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     score REAL NOT NULL,
@@ -456,6 +468,43 @@ class Database:
         params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item["payload"] or "{}")
+            except (TypeError, ValueError):
+                item["payload"] = {}
+            result.append(item)
+        return result
+
+    # ---- Polymarket 利率预测（自动 / 人工共用，按来源+日期幂等）----
+    def upsert_polymarket_snapshot(
+        self, source: str, as_of_date: str, question: str | None,
+        yes_probability: float | None, volume: float | None,
+        payload: dict | str, raw_json: str | None = None,
+    ) -> None:
+        payload_text = payload if isinstance(payload, str) else json.dumps(
+            payload or {}, ensure_ascii=False
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO polymarket_snapshots "
+                "(source, as_of_date, question, yes_probability, volume, "
+                " payload, raw_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (source, str(as_of_date), question, yes_probability, volume,
+                 payload_text, raw_json,
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+
+    def polymarket_snapshots(self, limit: int = 5) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT source, as_of_date, question, yes_probability, volume, "
+                "payload, raw_json, created_at FROM polymarket_snapshots "
+                "ORDER BY as_of_date DESC, created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         result = []
         for row in rows:
             item = dict(row)

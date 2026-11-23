@@ -15,7 +15,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 ## GitHub 云端定时部署
 
 - 仓库：<https://github.com/lyjiiiirr-crypto/GoldMacroAI>（Public）
-- `.github/workflows/gold-macro.yml`：每 4 小时自动运行，在 TradingView 4H K 线收线前 1 分钟（UTC 03:59 / 07:59 / ...）采集；GitHub 定时可能延迟，无法保证秒级精确，也可在 Actions 页面点 **Run workflow** 手动触发。
+- `.github/workflows/gold-macro.yml`：每 4 小时自动运行，在 TradingView 4H 收线后 1 分钟内（北京时间 10:01 / 14:01 / 18:01 / 22:01 / 02:01 / 06:01，UTC 02:01 / 06:01 / ...）采集；GitHub 定时可能延迟，无法保证秒级精确，也可在 Actions 页面点 **Run workflow** 手动触发。
 - 所需 Secrets（Settings → Secrets and variables → Actions）：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`NTFY_TOPIC`。密钥只存在 GitHub Secrets，不进代码库。
 - 每次运行后历史数据库 `database/gold_macro.db` 会自动提交回仓库（`.gitignore` 默认忽略，工作流中强制添加）。
 - 修改代码后直接 `git push` 即可，GitHub Actions 会自动使用仓库里的 Secrets。
@@ -60,14 +60,15 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 技术面报告（本地自算） | Yahoo Finance 公开行情 `GC=F` 日线，自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
 | GEX 地图 / Gamma 翻转点 | Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），用 IV + 未平仓量按 Black-Scholes 本地估算 GEX、gamma flip 与对冲压力方向；延迟/近似值，**非交易信号、不参与宏观评分**，可人工导入 |
 | 技术面 × GEX 融合方向 | 技术面（SMA/RSI/MACD）定基础方向，GEX 通过现价与 gamma flip 的相对位置给出偏向并放大/削弱，输出**偏多 / 偏空 / 中性震荡**；写入日报、`/fusion` 可查，未回测、**不参与宏观评分** |
-| 4H CRT 高低点 | TradingView 公开行情 `OANDA:XAUUSD` 的 4H K 线（scanner 免费接口），取每根高/低点作为流动性位；接口失败时回退 Yahoo 1H 本地聚合。识别扫前高/前低与延续/反转，写入「交易执行提醒」，`/crt` 可查，未回测、**非交易信号** |
+| 4H CRT 三根结构 | 已收盘 4H K 线优先尝试 TradingView 公开 scanner（若支持 `[1]/[2]/[3]` 偏移列），实测该接口通常只返回未完成根，因此稳定来源为 Yahoo 1H 本地聚合（TradingView 仅作现价参考）；按 P1 设区间 / P2 扫一侧并收回 / P3 向另一侧扩张判定（ICT 单根 K 线版 Power of Three）。写入「交易执行提醒」并附 3 根 K 线图，`/crt` 可查，未回测、**非交易信号** |
+| Polymarket 利率预测 | 公开 Gamma API 读取利率市场当前 Yes 赔率，展示在「美联储政策预期」；**预测市场定价，非官方利率数据、不参与宏观评分**，可人工导入 |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
 | 时效性控制 | 每条数据记录观测日期；过期数据不参与打分，并降低置信度 |
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
 | 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/fusion` `/crt` `/bias` `/report` `/help` |
-| 定时任务 | GitHub Actions 每 4 小时、在 TradingView 4H 收线前 1 分钟（UTC 03:59 等）运行，历史数据库自动保存回仓库 |
+| 定时任务 | GitHub Actions 每 4 小时、在 TradingView 4H 收线后 1 分钟内（北京 10:01/14:01/18:01/22:01/02:01/06:01）运行，历史数据库自动保存回仓库 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
 **V1.0 仍不做/限制**：CME 官方 FedWatch API（收费，本项目使用社区公开归档，非官方承诺）、Trading Central 授权研报（商业/B2B 产品，无可验证免费公开源，本项目改用公开行情本地自算并明确标注非官方研报）、市场一致预期（BLS/BEA 不发布，故不伪造"意外值"，仍可人工导入）、秒级行情监控、交易结构识别（V2.0）。
@@ -85,7 +86,8 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
 | 黄金技术面 | Yahoo Finance 公开行情 `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
 | GEX / Gamma flip | [Cboe 免费延迟期权报价](https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json) `GLD`、`SPY`（`GEX_SYMBOLS` 可配置） | 免费公开接口，约 15 分钟延迟，单次请求返回整条链（含未平仓量 / IV / gamma）。Yahoo 免费链现网未平仓量常为 0，故改用 Cboe；本项目用 IV 本地按 Black-Scholes 估算（IV 缺失时回退 Cboe gamma）。GEX = Γ×OI×100×S²×0.01（看涨为正、看跌为负），flip 由整条链重定价找净 GEX 过零点。**数据延迟、未含真实做市商库存，仅作研究背景，非交易信号** |
-| 4H CRT 高低点 | TradingView 公开行情 `OANDA:XAUUSD`（`TV_CRT_SYMBOL` / `TV_CRT_URL` 可配置） | 使用 scanner 的 `open/high/low/close|240` 字段，采集时点在 4H 收线前 1 分钟；失败时回退 Yahoo `XAUUSD=X` 1H 聚合（`YHOO_CRT_URL`）。高/低点视为流动性，检测是否扫前根高低并判定延续/反转。**近似值，未回测，非交易信号** |
+| 4H CRT 三根结构 | Yahoo 1H 本地聚合为主（`YHOO_CRT_URL`），TradingView scanner 为辅（`TV_CRT_SYMBOL` / `TV_CRT_URL` 可配置） | Yahoo 1H 聚合为按 UTC 02/06/10/14/18/22 收线的 3 根已收盘 4H（北京 10/14/18/22/02/06）；若 TradingView scanner 返回 `[1]/[2]`/`[3]` 偏移列则优先采用，否则只作现价参考。采集时点在收线后 1 分钟内；P1 区间、P2 扫荡收回、P3 反向扩张；目标看 P1 远端，止损参考 P2 影线外。**近似值，未回测，非交易信号** |
+| Polymarket 利率预测 | [Polymarket Gamma API](https://gamma-api.polymarket.com)（`POLYMARKET_GAMMA_URL` 可配置） | 免费公开市场元数据与 Yes 赔率，无密钥；失败时优雅降级，可用 `--import-polymarket` 人工导入。仅作报告上下文，不参与评分 |
 
 ## 目录结构
 
@@ -185,10 +187,15 @@ python main.py --import-gex --date 2026-11-23 --gex-json gex_snapshot.json
 # 原始期权链响应（Cboe data.options 或 Yahoo optionChain.result[0]）→ 本地计算 GEX / flip
 python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rate 0.04
 
-# 4H CRT 高低点：可直接给高低点，也可传 Yahoo chart 响应 / 1H K 线由本地聚合（自动采集优先 TradingView）
+# 4H CRT 三根结构：可传三根 K 线、区间/扫荡/扩张高低点，也可传 Yahoo chart 响应 / 1H K 线（自动采集以 Yahoo 1H 聚合为主）
 python main.py --import-crt --date 2026-11-23 --crt-json crt_snapshot.json
-# crt_snapshot.json 示例：{"current_high":3636.4,"current_low":3602.9,
-#   "prev_high":3629.6,"prev_low":3567.8,"current_open":3605,"current_close":3630}
+# crt_snapshot.json 示例（三根 K 线）：
+# {"candle1":{"high":3629.6,"low":3567.8,"open":3580,"close":3610},
+#  "candle2":{"high":3636.4,"low":3560.2,"open":3610,"close":3615},
+#  "candle3":{"high":3640.1,"low":3590.0,"open":3615,"close":3630}}
+
+# Polymarket 利率预测：Gamma 原始响应 / 市场列表 / 已构造快照均可
+python main.py --import-polymarket --polymarket-json polymarket.json
 ```
 
 GEX 报告中会明确标注「Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算、非做市商真实库存、非交易信号」；`gex_snapshots` 表按（来源、标的、日期）幂等写入，人工导入与自动采集互不覆盖。
@@ -203,14 +210,16 @@ GEX 报告中会明确标注「Cboe 免费延迟期权报价 + 本地 Black-Scho
 - **合成**：`0.65 × 技术方向 + 0.35 × GEX 方向`，乘调节系数后，≥ +0.2 判偏多、≤ -0.2 判偏空，其余为中性震荡。
 - 该结果**只写入报告**，不进入 100 分宏观评分，也不触发交易提醒；输出固定带「延迟近似、未回测、不参与宏观评分、非交易信号」标注。
 
-#### 交易执行提醒（4H CRT → LTF）
+#### 交易执行提醒（4H CRT 三根结构 → 4H/15M 执行）
 
-报告结尾的执行提醒不再使用固定文案，而是基于 4H CRT 快照生成（`/crt` 可单独查询高低点）：
+报告结尾的执行提醒基于 4H 三根 CRT 快照生成（`/crt` 可单独查询），并在 Telegram 文本后附一张 3 根 4H K 线图：
 
-- **4H 结构**：最新一根已收盘 4H K 线的高/低点、实体强弱、UTC 对齐时间；前一根高/低点作为流动性位，并标注本根是否扫前高/前低。
-- **情景判定**：扫前低后收强阳 → 反转偏多；扫前高后收强阴 → 反转偏空；未扫盘且实体够强 → 延续；实体不足 → 待确认。
-- **结构参考**：均衡位（4H 中轴）、目标与止损参考位（前一根高/低点），仅为结构位而非挂单建议。
-- **融合方向**：与 4H 情景冲突时降级观望，先等结构确认；LTF 切 2M/5M 等 inducement 清扫与 order flow 回测，不追价。
+- **P1 设区间**：第 1 根 4H 的高/低点即阻力/支撑（区间远端）。
+- **P2 扫荡并收回**：第 2 根扫一侧流动性并收回第 1 根区间内；标注扫荡高点距阻力、扫荡低点距支撑的点数。
+- **P3 反向扩张**：第 3 根向另一侧扩张，确认偏多/偏空；文字只标注 P3 高点距阻力、低点距支撑的点数，**不再标注距现价**。
+- **执行参考**：目标看第 1 根远端（ICT 单根 K 线版 Power of Three），止损参考第 2 根影线之外；均为结构位而非挂单建议。
+- **融合方向**：与 4H 情景冲突时降级观望；LTF 用 4H/15M 参与 P2 扫荡，等收回 + 回测确认再入场，不追价。
+- **截图**：本地纯标准库生成 PNG，通过 `sendPhoto` 推送；生成/推送失败时不影响文本日报。
 - 规则未回测，仅为流程清单，**非交易信号、不构成投资建议**。
 
 未来 24 小时经济事件：复制 `data/calendar.example.json` 为 `data/calendar.json` 并按自己的日历修改。
@@ -237,7 +246,7 @@ OLLAMA_MODEL=qwen2.5:3b
 python main.py --listen
 ```
 
-在 Telegram 中发送 `/help` 查看命令；`/fusion` 查看融合方向，`/crt` 查看 4H CRT 高低点。
+在 Telegram 中发送 `/help` 查看命令；`/fusion` 查看融合方向，`/crt` 查看 4H CRT 三根结构与关键位。
 
 ## 二、部署到 GitHub 免费云端
 
@@ -249,7 +258,7 @@ python main.py --listen
    - `TELEGRAM_CHAT_ID`
    - （可选）`CLOUD_AI_BASE_URL` / `CLOUD_AI_API_KEY` / `CLOUD_AI_MODEL`
 4. 进入 `Actions`，手动运行 `GoldMacroAI scheduled run` 验证。
-5. 之后每 4 小时自动运行（TradingView 4H 收线前 1 分钟，UTC 03:59 等）；数据库提交回仓库。
+5. 之后每 4 小时自动运行（TradingView 4H 收线后 1 分钟内，北京 10:01/14:01/18:01/22:01/02:01/06:01）；数据库提交回仓库。
 
 **云端注意**：GitHub Actions 不是常驻服务器，定时任务可能延迟；本地 Ollama 地址 `localhost:11434` 云端访问不到，云端默认使用规则分析。免费额度（私有仓库每月 2000 分钟 Actions）需自行确认。
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Callable
 
 from config import TELEGRAM_API_BASE, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
@@ -46,6 +47,42 @@ def send_message(text: str, chat_id: str | None = None, parse_mode: str = "HTML"
     _request("sendMessage", {
         "chat_id": chat_id, "text": text[:4096], "parse_mode": parse_mode,
     }, token=token)
+    return True
+
+
+def send_photo(photo: bytes, caption: str | None = None, chat_id: str | None = None,
+               token: str | None = None) -> bool:
+    """通过 Telegram sendPhoto 推送 PNG 截图；失败抛出 TelegramError。"""
+    token = token or TELEGRAM_BOT_TOKEN
+    chat_id = chat_id or TELEGRAM_CHAT_ID
+    if not token or not chat_id:
+        return False
+    boundary = f"----GoldMacroAI{uuid.uuid4().hex}"
+    parts = [
+        (f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n"
+         f"{chat_id}\r\n").encode("utf-8"),
+        (f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; "
+         f"filename=\"crt_4h.png\"\r\nContent-Type: image/png\r\n\r\n").encode("utf-8")
+        + bytes(photo) + b"\r\n",
+    ]
+    if caption:
+        parts.append(
+            (f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n"
+             f"{caption[:1024]}\r\n").encode("utf-8")
+        )
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    request = urllib.request.Request(
+        api_url("sendPhoto", token), data=b"".join(parts), method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                 "User-Agent": "GoldMacroAI/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except Exception as exc:  # noqa: BLE001
+        raise TelegramError(f"Telegram sendPhoto 请求失败: {exc}") from exc
+    if not payload.get("ok"):
+        raise TelegramError(f"Telegram sendPhoto 返回错误: {payload.get('description', payload)}")
     return True
 
 

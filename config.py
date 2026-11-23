@@ -132,6 +132,8 @@ FEDWATCH_ARCHIVE_URL = env(
     "FEDWATCH_ARCHIVE_URL",
     "https://raw.githubusercontent.com/zuowood1234/cme-fedwatch-tracker/main/data/daily/{date}.json",
 )
+# Polymarket 利率预测：公开 Gamma API，无需密钥；仅作报告上下文
+POLYMARKET_GAMMA_URL = env("POLYMARKET_GAMMA_URL", "https://gamma-api.polymarket.com").rstrip("/")
 YHOO_DXY_URL = env(
     "YHOO_DXY_URL",
     "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?range=1mo&interval=1d",

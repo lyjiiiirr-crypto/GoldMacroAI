@@ -8,8 +8,9 @@ from analysis.ai_interpreter import generate_analysis
 from analysis.data_cleaner import age_days, change_by_days, pct_change
 from analysis.macro_score import compute_score
 from alerts.alert_rules import evaluate, send_alerts
+from alerts.crt_chart import build_crt_chart
 from alerts.message_templates import render_alert, render_daily_report
-from alerts.notifier import channel_status, notify
+from alerts.notifier import channel_status, notify, notify_photo
 from config import SERIES
 from data.calendar import format_calendar, upcoming_events
 from data.cot import collect as collect_cot
@@ -22,6 +23,7 @@ from data.fomc import collect as collect_fomc
 from data.fred import collect as collect_fred
 from data.gex import collect as collect_gex
 from data.macro_auto import collect as collect_macro
+from data.polymarket import collect as collect_polymarket
 from data.technical import collect as collect_technical
 from database.models import Database
 
@@ -41,6 +43,7 @@ def collect_all(db: Database) -> dict:
     collectors = (
         ("DXY", collect_dxy),
         ("FedWatch", collect_fedwatch),
+        ("Polymarket", collect_polymarket),
         ("BLS", collect_macro),
         ("COT", collect_cot),
         ("WGC_ETF", collect_etf),
@@ -148,6 +151,10 @@ def build_market(db: Database) -> tuple[dict, dict]:
             "as_of": fed["as_of"], "stale": False,
         }
 
+    poly_rows = db.polymarket_snapshots(limit=1)
+    if poly_rows:
+        market["polymarket"] = poly_rows[0].get("payload") or {}
+
     events = []
     for row in db.events(limit=50):
         raw_surprise = float(row["actual"]) - float(row["expected"])
@@ -245,6 +252,17 @@ def demo_market() -> tuple[dict, dict]:
                      "cut_probability": 68.0, "change_pp": 10.0, "dovish_pp": 10.0,
                      "metric_pp": 10.0, "metric_name": "鹰鸽净变化",
                      "compared_with": "7天前", "as_of": today},
+        "polymarket": {
+            "source": "Polymarket 公开预测市场（Gamma API）",
+            "as_of": f"{today}T08:00:00+00:00",
+            "markets": [{
+                "question": "美联储下次会议降息 25bp?", "label": "Yes",
+                "yes_probability": 68.0, "volume": 1250000.0,
+                "end_date": "", "url": "",
+            }],
+            "text": "美联储下次会议降息 25bp?: Yes 68.0%",
+            "disclaimer": "Polymarket 赔率为公开预测市场定价，非官方利率数据；仅作报告上下文，不构成交易信号。",
+        },
         "events": [{"name": "CPI 同比", "actual": 2.7, "expected": 2.8,
                      "release_date": today, "surprise": -0.1}],
         "flows": [{"name": "COT净多头", "change": 18000, "scale": 30000,
@@ -304,17 +322,30 @@ def demo_market() -> tuple[dict, dict]:
         ],
         "crt": [{
             "source": "TradingView 公开行情（4H CRT）",
-            "symbol": "XAUUSD", "as_of": f"{today}T08:00:00+00:00",
+            "symbol": "XAUUSD", "as_of": f"{today}T10:00:00+00:00",
             "timeframe": "4h", "current_close": 3605.80,
             "current_high": 3620.50, "current_low": 3580.20,
-            "prev_high": 3610.00, "prev_low": 3575.40, "equilibrium": 3600.35,
-            "body_pct": 62.0, "direction": "偏多", "swept_prev_high": False,
-            "swept_prev_low": True, "scenario": "反转", "bias": "偏多",
-            "target": 3610.00, "stop_ref": 3575.40,
-            "summary": f"4H（UTC 08:00）高 3620.50 / 低 3580.20，实体 62% 偏多；"
-                       f"前一根高 3610.00 / 低 3575.40；已扫前低（卖出流动性）；"
-                       f"情景 反转（偏多）。",
-            "payload": {"label": "现货黄金 XAUUSD", "as_of": f"{today}T08:00:00+00:00"},
+            "range_high": 3610.00, "range_low": 3575.40,
+            "prev_high": 3610.00, "prev_low": 3575.40, "equilibrium": 3592.70,
+            "sweep_high": 3608.00, "sweep_low": 3568.00,
+            "dist_high_to_resistance": -10.50, "dist_low_to_support": 4.80,
+            "dist_sweep_low_to_support": -7.40, "dist_sweep_high_to_resistance": 2.00,
+            "sweep_side": "低", "swept_prev_high": False, "swept_prev_low": True,
+            "scenario": "Power of Three · 偏多确认", "bias": "偏多",
+            "target": 3610.00, "stop_ref": 3568.00,
+            "summary": f"P1 区间 高 3610.00 / 低 3575.40；P2 扫低 3568.00 后收回区间；"
+                       f"P3 扩张 高 3620.50 / 低 3580.20；情景 Power of Three · 偏多确认。",
+            "payload": {
+                "label": "现货黄金 XAUUSD", "as_of": f"{today}T10:00:00+00:00",
+                "candles": [
+                    {"time": f"{today}T02:00:00+00:00", "open": 3580.0,
+                     "high": 3610.0, "low": 3575.4, "close": 3590.0},
+                    {"time": f"{today}T06:00:00+00:00", "open": 3590.0,
+                     "high": 3608.0, "low": 3568.0, "close": 3595.0},
+                    {"time": f"{today}T10:00:00+00:00", "open": 3595.0,
+                     "high": 3620.5, "low": 3580.2, "close": 3605.8},
+                ],
+            },
         }],
         "calendar": [],
     }
@@ -379,6 +410,20 @@ def run_once(db: Database | None = None, *, dry_run: bool = False, send: bool = 
                 return ok
 
             result["sent"] += send_alerts(alerts, db, _send_alert)
+
+            # 执行提醒后附 3 根 4H K 线截图；失败不影响文本报告与提醒
+            try:
+                chart = build_crt_chart(market)
+            except Exception as exc:  # noqa: BLE001
+                chart = None
+                print(f"[chart] 3 根 4H 截图生成失败: {exc}")
+            if chart:
+                photo_ok, photo_channel = notify_photo(
+                    chart, caption="3根4H K线（P1区间 / P2扫荡 / P3扩张）",
+                    title="4H CRT K线",
+                )
+                if photo_ok:
+                    result["sent"].append(f"crt_chart({photo_channel})")
         else:
             print(f"[notify] 推送通道不可用（{channel or channel_status()}），跳过全部推送。"
                   "配置 Telegram Bot 或设置 NTFY_TOPIC 即可启用")
