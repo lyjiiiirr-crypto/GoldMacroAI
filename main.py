@@ -23,7 +23,8 @@ from pathlib import Path
 from config import TECHNICAL_SYMBOLS
 
 from analysis.gold_bias import bias_label
-from alerts.message_templates import render_daily_report, render_gex_lines
+from analysis.tech_gex_fusion import fuse
+from alerts.message_templates import render_daily_report, render_gex_lines, render_fusion_lines
 from alerts.telegram_bot import COMMANDS, poll_commands
 from data.calendar import format_calendar
 from data.fedwatch import format_snapshot
@@ -116,6 +117,10 @@ def command_handler(command: str, message: dict) -> str:
     if command == "/gex":
         gex = market.get("gex") or []
         return "\n".join(render_gex_lines(gex, limit=4))
+    if command == "/fusion":
+        return "\n".join(render_fusion_lines(
+            fuse(market.get("technical") or [], market.get("gex") or [])
+        ))
     if command == "/report":
         return render_daily_report(score, {"text": "请把本机 --report 输出的 AI 分析粘贴到此处。", "source": "rule"}, market)
     return "未知命令，发送 /help 查看可用命令。"

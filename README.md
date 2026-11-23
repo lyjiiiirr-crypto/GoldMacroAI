@@ -59,12 +59,13 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | WGC ETF 自动采集 | 公开图表接口，按周汇总全球持仓吨数与资金流，保留分项数据 |
 | 技术面报告（本地自算） | Yahoo Finance 公开行情 `GC=F` 日线，自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
 | GEX 地图 / Gamma 翻转点 | Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），用 IV + 未平仓量按 Black-Scholes 本地估算 GEX、gamma flip 与对冲压力方向；延迟/近似值，**非交易信号、不参与宏观评分**，可人工导入 |
+| 技术面 × GEX 融合方向 | 技术面（SMA/RSI/MACD）定基础方向，GEX 通过现价与 gamma flip 的相对位置给出偏向并放大/削弱，输出**偏多 / 偏空 / 中性震荡**；写入日报、`/fusion` 可查，未回测、**不参与宏观评分** |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
 | 时效性控制 | 每条数据记录观测日期；过期数据不参与打分，并降低置信度 |
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
-| 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/bias` `/report` `/help` |
+| 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/fusion` `/bias` `/report` `/help` |
 | 定时任务 | GitHub Actions 每 6 小时运行，历史数据库自动保存回仓库 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
@@ -95,7 +96,7 @@ GoldMacroAI/
 ├── .env.example
 ├── data/                       fred.py / common.py / fedwatch.py / fedwatch_auto.py
 │                               dxy.py / macro_auto.py / cot.py / etf.py / fomc.py / technical.py / gex.py / calendar.py
-├── analysis/                   data_cleaner.py / macro_score.py / gold_bias.py / ai_interpreter.py
+├── analysis/                   data_cleaner.py / macro_score.py / gold_bias.py / ai_interpreter.py / tech_gex_fusion.py
 ├── alerts/                     telegram_bot.py / message_templates.py / alert_rules.py
 ├── database/                   models.py（SQLite，运行时生成 gold_macro.db）
 ├── scheduler/jobs.py           完整任务流程
@@ -185,6 +186,16 @@ python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rat
 
 GEX 报告中会明确标注「Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算、非做市商真实库存、非交易信号」；`gex_snapshots` 表按（来源、标的、日期）幂等写入，人工导入与自动采集互不覆盖。
 
+#### 技术面 × GEX 融合方向
+
+日报会在「技术面」与「GEX / Gamma 翻转点」之后追加一段融合结论（`/fusion` 命令可单独查询）。规则见 `analysis/tech_gex_fusion.py`，均为**初始设定、未回测**：
+
+- **技术面方向**：技术报告 `score` 以 ±4 为满信号映射到 -1~+1；缺 `score` 时用 `bias`（偏多 / 偏空）按 0.6 折算。
+- **GEX 方向**：净 GEX < 0 且现价低于 flip → 负 Gamma 放大下行，方向为负；净 GEX > 0 且现价高于 flip → 正 Gamma 托底，方向为 +0.6 倍强度；其余情形记 0。GLD 权重 0.65、SPY 权重 0.35，flip 距离 ±8% 视为满强度。
+- **放大系数**：负 Gamma 随强度最高放大到约 1.5×，正 Gamma 最低压缩到约 0.6×；融合时仅按 `0.75 + 0.25 × 系数` 温和调节。
+- **合成**：`0.65 × 技术方向 + 0.35 × GEX 方向`，乘调节系数后，≥ +0.2 判偏多、≤ -0.2 判偏空，其余为中性震荡。
+- 该结果**只写入报告**，不进入 100 分宏观评分，也不触发交易提醒；输出固定带「延迟近似、未回测、不参与宏观评分、非交易信号」标注。
+
 未来 24 小时经济事件：复制 `data/calendar.example.json` 为 `data/calendar.json` 并按自己的日历修改。
 
 ### 5. 本地 AI（可选）
@@ -209,7 +220,7 @@ OLLAMA_MODEL=qwen2.5:3b
 python main.py --listen
 ```
 
-在 Telegram 中发送 `/help` 查看命令。
+在 Telegram 中发送 `/help` 查看命令，`/fusion` 可单独查看「技术面 × GEX 融合方向」。
 
 ## 二、部署到 GitHub 免费云端
 

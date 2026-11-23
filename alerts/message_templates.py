@@ -5,6 +5,7 @@ import html
 from datetime import datetime, timedelta, timezone
 
 from analysis.gold_bias import DISCLAIMER, bias_label, score_bar
+from analysis.tech_gex_fusion import fuse
 from config import CHINA_TIMEZONE_OFFSET_HOURS, SERIES
 
 ESC = html.escape
@@ -53,6 +54,24 @@ def render_gex_lines(gex: list[dict], *, limit: int = 2) -> list[str]:
         if bits:
             lines.append("  " + ESC("；".join(bits)))
     lines.append("  <i>来源：Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算，非做市商真实库存，非交易信号。</i>")
+    return lines
+
+
+def render_fusion_lines(fusion: dict) -> list[str]:
+    """渲染「技术面 × GEX 融合方向」结论（日报 /report 共用）。"""
+    direction = str(fusion.get("direction") or "中性震荡")
+    icon = {"偏多": "🟢", "偏空": "🔴", "中性震荡": "⚪"}.get(direction, "⚪")
+    score = fusion.get("score")
+    strength = fusion.get("strength") or ""
+    lines = ["<b>技术面 × GEX 融合方向（延迟近似，未回测）</b>"]
+    conclusion = f"- 结论：<b>{icon} {ESC(direction)}</b>"
+    if score is not None:
+        conclusion += f"（融合分 {float(score):+.2f}，强度 {ESC(str(strength))}）"
+    lines.append(conclusion)
+    if fusion.get("reason"):
+        lines.append("  " + ESC(str(fusion["reason"])))
+    if fusion.get("disclaimer"):
+        lines.append(f"  <i>{ESC(str(fusion['disclaimer']))}</i>")
     return lines
 
 
@@ -153,6 +172,12 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
     gex = market.get("gex") or []
     if gex:
         lines += [""] + render_gex_lines(gex, limit=2)
+
+    # 技术面 × GEX 融合方向：只作报告上下文，不参与宏观评分
+    if technical or gex:
+        lines += [""] + render_fusion_lines(
+            fuse(market.get("technical") or [], market.get("gex") or [])
+        )
 
     calendar = market.get("calendar") or []
     if calendar:
