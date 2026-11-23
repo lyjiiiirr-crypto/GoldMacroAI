@@ -20,6 +20,7 @@ jobs:
         id: timing
         run: |
           python3 - <<'PY' > seconds.txt
+          import math
           from datetime import datetime, timedelta, timezone
 
           now = datetime.now(timezone.utc)
@@ -29,7 +30,9 @@ jobs:
           ]
           targets = [t + timedelta(days=1) if t <= now else t for t in targets]
           nxt = min(targets)
-          print(int((nxt - now).total_seconds()))
+          # ceil: never wake up before the target second, otherwise the next
+          # keeper could compute the same target again and duplicate a report.
+          print(math.ceil((nxt - now).total_seconds()))
           PY
           seconds="$(cat seconds.txt)"
           echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
