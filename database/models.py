@@ -20,6 +20,7 @@ TABLES = (
     "fomc_documents",
     "technical_reports",
     "gex_snapshots",
+    "crt_snapshots",
     "reports",
     "alert_log",
 )
@@ -121,6 +122,26 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_gex_snapshots_lookup
                     ON gex_snapshots (as_of_date DESC, symbol);
+                CREATE TABLE IF NOT EXISTS crt_snapshots (
+                    source TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    as_of TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    current_high REAL,
+                    current_low REAL,
+                    prev_high REAL,
+                    prev_low REAL,
+                    equilibrium REAL,
+                    scenario TEXT,
+                    bias TEXT,
+                    summary TEXT,
+                    payload TEXT,
+                    raw_json TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (source, symbol, as_of)
+                );
+                CREATE INDEX IF NOT EXISTS idx_crt_snapshots_lookup
+                    ON crt_snapshots (as_of DESC, symbol);
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     score REAL NOT NULL,
@@ -384,6 +405,54 @@ class Database:
             sql += " WHERE symbol = ?"
             params.append(symbol)
         sql += " ORDER BY as_of_date DESC, symbol ASC, created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item["payload"] or "{}")
+            except (TypeError, ValueError):
+                item["payload"] = {}
+            result.append(item)
+        return result
+
+    # ---- 4H CRT 快照（自动 / 人工共用，按来源+标的+时间幂等）----
+    def upsert_crt_snapshot(
+        self, source: str, symbol: str, as_of: str, timeframe: str,
+        current_high: float | None, current_low: float | None,
+        prev_high: float | None, prev_low: float | None,
+        equilibrium: float | None, scenario: str | None, bias: str | None,
+        summary: str, payload: dict | str, raw_json: str | None = None,
+    ) -> None:
+        payload_text = payload if isinstance(payload, str) else json.dumps(
+            payload or {}, ensure_ascii=False
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO crt_snapshots "
+                "(source, symbol, as_of, timeframe, current_high, current_low, "
+                " prev_high, prev_low, equilibrium, scenario, bias, summary, "
+                " payload, raw_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (source, symbol, str(as_of), timeframe, current_high, current_low,
+                 prev_high, prev_low, equilibrium, scenario, bias, summary,
+                 payload_text, raw_json,
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+
+    def crt_snapshots(self, symbol: str | None = None, limit: int = 8) -> list[dict]:
+        sql = (
+            "SELECT source, symbol, as_of, timeframe, current_high, current_low, "
+            "prev_high, prev_low, equilibrium, scenario, bias, summary, payload, "
+            "raw_json, created_at FROM crt_snapshots"
+        )
+        params: list = []
+        if symbol:
+            sql += " WHERE symbol = ?"
+            params.append(symbol)
+        sql += " ORDER BY as_of DESC, symbol ASC, created_at DESC LIMIT ?"
         params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()

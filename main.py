@@ -10,6 +10,7 @@
    python main.py --demo             # 无密钥演示完整报告
   python main.py --import-technical-report --summary "..." --bias 偏多 --date 2026-11-23
    python main.py --import-gex --gex-json gex_snapshot.json
+   python main.py --import-crt --crt-json crt_snapshot.json
    python main.py --listen           # 本地轮询 Telegram 命令
 """
 from __future__ import annotations
@@ -24,7 +25,9 @@ from config import TECHNICAL_SYMBOLS
 
 from analysis.gold_bias import bias_label
 from analysis.tech_gex_fusion import fuse
-from alerts.message_templates import render_daily_report, render_gex_lines, render_fusion_lines
+from alerts.message_templates import (
+    render_crt_lines, render_daily_report, render_gex_lines, render_fusion_lines,
+)
 from alerts.telegram_bot import COMMANDS, poll_commands
 from data.calendar import format_calendar
 from data.fedwatch import format_snapshot
@@ -121,6 +124,8 @@ def command_handler(command: str, message: dict) -> str:
         return "\n".join(render_fusion_lines(
             fuse(market.get("technical") or [], market.get("gex") or [])
         ))
+    if command == "/crt":
+        return "\n".join(render_crt_lines(market.get("crt") or [], limit=4))
     if command == "/report":
         return render_daily_report(score, {"text": "请把本机 --report 输出的 AI 分析粘贴到此处。", "source": "rule"}, market)
     return "未知命令，发送 /help 查看可用命令。"
@@ -144,6 +149,8 @@ def parse_args() -> argparse.Namespace:
                         help="录入技术面报告（支持 --report-json 文件或 JSON 字符串）")
     action.add_argument("--import-gex", action="store_true",
                         help="录入 GEX/Gamma flip 快照（支持 --gex-json 文件或 JSON 字符串）")
+    action.add_argument("--import-crt", action="store_true",
+                        help="录入 4H CRT 高低点快照（支持 --crt-json 文件或 JSON 字符串）")
     action.add_argument("--setup-ntfy", action="store_true", help="生成免注册 ntfy.sh 推送主题并写入 .env")
     action.add_argument("--telegram-id", action="store_true", help="用 Bot Token 查询你的 Telegram chat_id")
     parser.add_argument("--no-collect", action="store_true", help="跳过 FRED 联网，仅用本地缓存")
@@ -174,6 +181,8 @@ def parse_args() -> argparse.Namespace:
                         help="技术面报告 JSON 字符串或 .json 文件路径（含 summary/bias 字段）")
     parser.add_argument("--gex-json", default="",
                         help="GEX 快照 JSON 字符串或 .json 文件路径（快照结构或 Yahoo 期权链响应）")
+    parser.add_argument("--crt-json", default="",
+                        help="CRT 快照 JSON 字符串或 .json 文件路径（高低点 / Yahoo chart / 1H K 线）")
     parser.add_argument("--rate", type=float, default=0.0,
                         help="导入原始期权链时使用的无风险利率，默认 0")
     parser.add_argument("--token", help="Telegram Bot Token（仅 --telegram-id 使用）")
@@ -304,6 +313,40 @@ def main() -> int:
             payload=snap, raw_json=json.dumps(data, ensure_ascii=False),
         )
         print(f"GEX 快照已保存：{gex_symbol} {snap['as_of']}（{snap['regime']}，来源 {gex_source}）")
+        return 0
+    if args.import_crt:
+        if not args.crt_json:
+            print("需要 --crt-json（CRT 高低点快照 / Yahoo chart / 1H K 线的 JSON 文件或字符串）")
+            return 2
+        try:
+            data = load_json_object(args.crt_json)
+        except (OSError, ValueError) as exc:
+            print(f"CRT JSON 解析失败：{exc}")
+            return 2
+        from data.crt import snapshot_from_data
+
+        crt_symbol = str(data.get("symbol") or args.symbol or "GC=F")
+        try:
+            snap = snapshot_from_data(crt_symbol, data)
+        except (ValueError, KeyError, TypeError) as exc:
+            print(f"CRT 快照构造失败：{exc}")
+            return 2
+        if args.date and not data.get("as_of") and "chart" not in data and "candles" not in data:
+            snap["as_of"] = args.date
+        # 人工导入统一标记 manual（可用 --source 覆盖），与自动来源区分且互不覆盖
+        crt_source = args.source or "manual"
+        db.upsert_crt_snapshot(
+            source=crt_source, symbol=crt_symbol, as_of=snap["as_of"],
+            timeframe=snap.get("timeframe") or "4h",
+            current_high=snap.get("current_high"), current_low=snap.get("current_low"),
+            prev_high=snap.get("prev_high"), prev_low=snap.get("prev_low"),
+            equilibrium=snap.get("equilibrium"), scenario=snap.get("scenario"),
+            bias=snap.get("bias"), summary=str(snap.get("summary") or ""),
+            payload=snap, raw_json=json.dumps(data, ensure_ascii=False),
+        )
+        print(f"CRT 快照已保存：{crt_symbol} {snap['as_of']}"
+              f"（高 {snap['current_high']:.2f} / 低 {snap['current_low']:.2f}，"
+              f"{snap['scenario']}，来源 {crt_source}）")
         return 0
     if args.setup_ntfy:
         topic = f"goldmacroai-{uuid.uuid4().hex[:12]}"

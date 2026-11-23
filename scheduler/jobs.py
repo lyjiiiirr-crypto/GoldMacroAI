@@ -13,6 +13,7 @@ from alerts.notifier import channel_status, notify
 from config import SERIES
 from data.calendar import format_calendar, upcoming_events
 from data.cot import collect as collect_cot
+from data.crt import collect as collect_crt
 from data.dxy import collect as collect_dxy
 from data.etf import collect as collect_etf
 from data.fedwatch import change_pp, format_snapshot
@@ -46,6 +47,7 @@ def collect_all(db: Database) -> dict:
         ("FOMC", collect_fomc),
         ("Technical", collect_technical),
         ("GEX", collect_gex),
+        ("CRT", collect_crt),
     )
     for name, func in collectors:
         try:
@@ -69,7 +71,8 @@ def describe_collection(summary: dict) -> str:
             parts.append(f"[{result['source']}]")
         for key, label in (("fetched", "抓取"), ("saved", "写入"),
                            ("snapshots", "快照"), ("weeks", "周"),
-                           ("documents", "文件"), ("reports", "报告")):
+                           ("documents", "文件"), ("reports", "报告"),
+                           ("high", "高"), ("low", "低")):
             if result.get(key) is not None:
                 parts.append(f"{label} {result[key]}")
         if isinstance(result.get("series"), dict):
@@ -86,6 +89,8 @@ def describe_collection(summary: dict) -> str:
                 parts.append(f"{latest['symbol']} {latest.get('bias', '')}")
             if latest.get("close") is not None:
                 parts.append(f"收盘 {latest['close']}")
+            if latest.get("scenario"):
+                parts.append(f"情景 {latest['scenario']}")
         lines.append("  " + " ".join(parts))
     return "\n".join(lines)
 
@@ -214,9 +219,10 @@ def build_market(db: Database) -> tuple[dict, dict]:
         "next_meeting": (fed or {}).get("meeting_date", ""),
         "documents": docs,
     }
-    # 技术面 / GEX 只作为报告上下文展示，不参与宏观评分
+    # 技术面 / GEX / CRT 只作为报告上下文展示，不参与宏观评分
     market["technical"] = db.technical_reports(limit=12)
     market["gex"] = db.gex_snapshots(limit=8)
+    market["crt"] = db.crt_snapshots(limit=8)
     market["calendar"] = upcoming_events(hours=24)
     return market, inputs
 
@@ -296,6 +302,19 @@ def demo_market() -> tuple[dict, dict]:
                 },
             },
         ],
+        "crt": [{
+            "source": "Yahoo Finance 公开行情（本地聚合 4H CRT）",
+            "symbol": "GC=F", "as_of": f"{today}T08:00:00+00:00",
+            "timeframe": "4h", "current_high": 3620.50, "current_low": 3580.20,
+            "prev_high": 3610.00, "prev_low": 3575.40, "equilibrium": 3600.35,
+            "body_pct": 62.0, "direction": "偏多", "swept_prev_high": False,
+            "swept_prev_low": True, "scenario": "反转", "bias": "偏多",
+            "target": 3610.00, "stop_ref": 3575.40,
+            "summary": f"4H（UTC 08:00）高 3620.50 / 低 3580.20，实体 62% 偏多；"
+                       f"前一根高 3610.00 / 低 3575.40；已扫前低（卖出流动性）；"
+                       f"情景 反转（偏多）。",
+            "payload": {"label": "COMEX黄金期货", "as_of": f"{today}T08:00:00+00:00"},
+        }],
         "calendar": [],
     }
     inputs = {

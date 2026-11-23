@@ -2,8 +2,8 @@ name: GoldMacroAI scheduled run
 
 on:
   schedule:
-    # UTC 时间，每 6 小时一次；GitHub 定时任务可能延迟，不能保证精确触发
-    - cron: '0 */6 * * *'
+    # UTC 时间，每 4 小时一次；GitHub 定时任务可能延迟，不能保证精确触发
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 permissions:
