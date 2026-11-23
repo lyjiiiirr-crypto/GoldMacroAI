@@ -90,8 +90,11 @@ def compute_score(inputs: dict | None = None) -> ScoreResult:
     fed = inputs.get("fed_policy")
     if fed:
         stale = bool(fed.get("stale"))
-        raw = fed.get("change_pp") / FULL_SCALE["fed_policy_pp"]
-        detail = f"降息概率变化 {fed.get('change_pp'):+.1f} 个百分点"
+        dovish = fed.get("dovish_pp")
+        value = float(dovish) if dovish is not None else float(fed.get("change_pp", 0.0))
+        label = "鹰鸽净变化" if dovish is not None else "降息概率变化"
+        raw = value / FULL_SCALE["fed_policy_pp"]
+        detail = f"{label} {value:+.1f} 个百分点"
         if stale:
             warnings.append("FedWatch 快照已过期")
         _add(signals, "fed_policy", "美联储政策预期", raw, detail, not stale)

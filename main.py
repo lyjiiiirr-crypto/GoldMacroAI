@@ -6,7 +6,8 @@
   python main.py --dry-run          # 不发送、不落库，打印报告
   python main.py --send-now         # 采集 + 推送 Telegram
   python main.py --scheduled        # GitHub Actions 使用
-  python main.py --demo             # 无密钥演示完整报告
+   python main.py --sync-only        # 只采集全部免费数据源并入库
+   python main.py --demo             # 无密钥演示完整报告
   python main.py --listen           # 本地轮询 Telegram 命令
 """
 from __future__ import annotations
@@ -63,7 +64,7 @@ def command_handler(command: str, message: dict) -> str:
     if command == "/fed":
         return format_snapshot(market.get("fedwatch"))
     if command in ("/rates", "/dxy"):
-        keys = ("DFII10", "DGS2", "DGS10", "T10YIE") if command == "/rates" else ("DTWEXBGS",)
+        keys = ("DFII10", "DGS2", "DGS10", "T10YIE") if command == "/rates" else ("DXY", "DTWEXBGS")
         lines = []
         for key in keys:
             item = market.get(key)
@@ -87,6 +88,7 @@ def parse_args() -> argparse.Namespace:
     action.add_argument("--dry-run", action="store_true", help="采集并打印报告，不推送、不落库")
     action.add_argument("--send-now", action="store_true", help="采集并推送 Telegram")
     action.add_argument("--scheduled", action="store_true", help="GitHub Actions 定时任务入口")
+    action.add_argument("--sync-only", action="store_true", help="只采集并入库全部免费数据源，不生成报告/推送")
     action.add_argument("--demo", action="store_true", help="使用演示数据输出完整报告")
     action.add_argument("--listen", action="store_true", help="轮询 Telegram 命令")
     action.add_argument("--init-db", action="store_true", help="初始化 SQLite 数据库")
@@ -110,6 +112,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected", type=float, help="预期值")
     parser.add_argument("--previous", type=float, default=None, help="前值")
     parser.add_argument("--scale", type=float, default=0.3, help="满信号幅度")
+    parser.add_argument("--direction", choices=("normal", "inverse"), default="normal",
+                        help="事件方向：inverse 表示数值越高越利多黄金（如初请失业金人数）")
     parser.add_argument("--type", dest="flow_type", help="资金流向类型：COT / ETF")
     parser.add_argument("--value", type=float, help="净多头或持仓量")
     parser.add_argument("--token", help="Telegram Bot Token（仅 --telegram-id 使用）")
@@ -142,8 +146,10 @@ def main() -> int:
         if not args.name or args.actual is None or args.expected is None or not args.date:
             print("需要 --name --actual --expected --date")
             return 2
-        db.add_event(args.name, args.actual, args.expected, args.previous, args.scale, args.date)
-        print(f"经济数据已保存：{args.name} 实际 {args.actual} / 预期 {args.expected}")
+        db.add_event(args.name, args.actual, args.expected, args.previous, args.scale,
+                     args.date, direction=args.direction)
+        print(f"经济数据已保存：{args.name} 实际 {args.actual} / 预期 {args.expected}"
+              f"（方向：{args.direction}）")
         return 0
     if args.import_flow:
         if not args.flow_type or args.value is None or not args.date:
@@ -185,6 +191,11 @@ def main() -> int:
 
     if args.demo:
         run_once(db=db, demo=True)
+    elif args.sync_only:
+        result = run_once(db=db, sync_only=True, collect_data=not args.no_collect)
+        failures = [k for k, v in (result.get("collection") or {}).items()
+                    if not v.get("ok")]
+        print(f"[sync-only] 数据同步完成；失败来源：{', '.join(failures) or '无'}")
     elif args.send_now or args.scheduled:
         result = run_once(db=db, send=True, collect_data=not args.no_collect)
         print(f"[done] 已推送：{', '.join(result['sent']) or '无'}")

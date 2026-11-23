@@ -29,8 +29,9 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
     ]
     for series_id, label in (
         ("DFII10", "10Y实际收益率"), ("DGS2", "2Y国债收益率"),
-        ("DGS10", "10Y国债收益率"), ("DTWEXBGS", "美元广义指数"),
-        ("T10YIE", "10Y通胀预期"), ("DFF", "有效联邦基金利率"),
+        ("DGS10", "10Y国债收益率"), ("DXY", "美元指数 DXY"),
+        ("DTWEXBGS", "美元广义指数"), ("T10YIE", "10Y通胀预期"),
+        ("DFF", "有效联邦基金利率"),
     ):
         item = market.get(series_id)
         if not item or item.get("value") is None:
@@ -44,7 +45,28 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
         lines.append("- 暂无 FRED 数据（配置 FRED_API_KEY 后自动采集）")
 
     fed = market.get("fedwatch")
-    lines += ["", "<b>美联储政策预期</b>", f"- {ESC(fed.get('text', '无 FedWatch 快照')) if fed else '无 FedWatch 快照（可用 --import-fedwatch 录入）'}"]
+    lines += ["", "<b>美联储政策预期</b>", f"- {ESC(fed.get('text', '无 FedWatch 快照')) if fed else '无 FedWatch 快照（自动采集失败时可用 --import-fedwatch 录入）'}"]
+
+    fomc = market.get("fomc") or {}
+    if fomc:
+        lines += ["", "<b>FOMC 官方文件</b>"]
+        if fomc.get("next_meeting"):
+            lines.append(f"- 下次会议：{ESC(str(fomc['next_meeting']))}（FedWatch 隐含）")
+        for doc in (fomc.get("documents") or [])[:3]:
+            lines.append(
+                f'- <a href="{ESC(doc["url"])}">{ESC(doc["doc_type"])} '
+                f'{ESC(doc["doc_date"])}</a>'
+            )
+
+    macro = market.get("macro") or []
+    if macro:
+        lines += ["", "<b>美国宏观数据</b>"]
+        for item in macro[:6]:
+            stale = " ⚠️过期" if item.get("stale") else ""
+            lines.append(
+                f"- {ESC(item['name'])}：{item['value']:,.2f}{ESC(item['unit'])}"
+                f"（{ESC(item['change_text'])}，{ESC(item['date'])}）{stale}"
+            )
 
     events = market.get("events") or []
     if events:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,6 +17,7 @@ TABLES = (
     "fedwatch_snapshots",
     "events",
     "flows",
+    "fomc_documents",
     "reports",
     "alert_log",
 )
@@ -26,10 +28,16 @@ class Database:
         self.path = Path(path or DB_PATH)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
+        """返回自动提交并关闭的上下文；避免 Windows 下未关闭连接锁定 DB 文件。"""
         conn = sqlite3.connect(str(self.path), timeout=30)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def init_schema(self) -> None:
         with self._connect() as conn:
@@ -69,6 +77,15 @@ class Database:
                     scale REAL DEFAULT 30000,
                     created_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS fomc_documents (
+                    doc_type TEXT NOT NULL,
+                    doc_date TEXT NOT NULL,
+                    title TEXT,
+                    url TEXT NOT NULL,
+                    source TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (doc_type, doc_date)
+                );
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     score REAL NOT NULL,
@@ -86,6 +103,24 @@ class Database:
                     ON alert_log (kind, fingerprint, sent_at);
                 """
             )
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """为旧版数据库幂等补充字段（SQLite 不支持 ADD COLUMN IF NOT EXISTS）。"""
+        additions = {
+            "fedwatch_snapshots": {"dovish_pp": "REAL", "raw_json": "TEXT"},
+            "events": {
+                "direction": "TEXT DEFAULT 'normal'",
+                "source": "TEXT",
+            },
+            "flows": {"source": "TEXT", "raw_json": "TEXT"},
+        }
+        for table, columns in additions.items():
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, declaration in columns.items():
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
     def status(self) -> dict:
         counts = {}
@@ -117,66 +152,124 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    # ---- FedWatch 人工快照 ----
-    def add_fedwatch_snapshot(
+    # ---- FedWatch 概率快照（人工 / 自动共用，按日期幂等）----
+    def upsert_fedwatch_snapshot(
         self, date: str, cut: float, hold: float | None = None,
         hike: float | None = None, meeting: str | None = None,
-        source: str | None = None,
+        source: str | None = None, *, dovish_pp: float | None = None,
+        raw_json: str | None = None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO fedwatch_snapshots "
                 "(snapshot_date, cut_probability, hold_probability, hike_probability, "
-                " meeting_date, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (str(date), float(cut), hold, hike, meeting or "", source or "",
-                 datetime.now().isoformat(timespec="seconds")),
+                " meeting_date, source, dovish_pp, raw_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(date), float(cut), hold, hike, meeting or "", source or "manual",
+                 dovish_pp, raw_json, datetime.now().isoformat(timespec="seconds")),
             )
+
+    def add_fedwatch_snapshot(self, *args, **kwargs) -> None:
+        """兼容旧调用；人工导入默认来源为 manual。"""
+        if len(args) < 6 and "source" not in kwargs:
+            kwargs["source"] = "manual"
+        self.upsert_fedwatch_snapshot(*args, **kwargs)
 
     def fedwatch_snapshots(self) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT snapshot_date, cut_probability, hold_probability, "
-                "hike_probability, meeting_date, source FROM fedwatch_snapshots "
-                "ORDER BY snapshot_date DESC"
+                "hike_probability, meeting_date, source, dovish_pp "
+                "FROM fedwatch_snapshots ORDER BY snapshot_date DESC"
             ).fetchall()
         return [dict(row) for row in rows]
 
-    # ---- 经济数据 ----
-    def add_event(self, name: str, actual: float, expected: float,
-                  previous: float | None, scale: float, date: str) -> None:
+    # ---- 经济数据事件 ----
+    def upsert_event(self, name: str, actual: float, expected: float,
+                     previous: float | None, scale: float, date: str, *,
+                     direction: str = "normal", source: str = "manual") -> None:
+        """按 (事件名, 发布日期) 去重；direction=inverse 表示数值越高越利多黄金。"""
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO events (event_name, actual, expected, previous, scale, "
-                "release_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (name, float(actual), float(expected), previous, float(scale),
-                 str(date), datetime.now().isoformat(timespec="seconds")),
+                "DELETE FROM events WHERE event_name = ? AND release_date = ?",
+                (name, str(date)),
             )
+            conn.execute(
+                "INSERT INTO events (event_name, actual, expected, previous, scale, "
+                "release_date, direction, source, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, float(actual), float(expected), previous, float(scale),
+                 str(date), direction, source,
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+
+    def add_event(self, name: str, actual: float, expected: float,
+                  previous: float | None, scale: float, date: str,
+                  direction: str = "normal", source: str = "manual") -> None:
+        self.upsert_event(name, actual, expected, previous, scale, date,
+                          direction=direction, source=source)
 
     def events(self, limit: int = 50) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT event_name, actual, expected, previous, scale, release_date "
-                "FROM events ORDER BY release_date DESC, id DESC LIMIT ?",
+                "SELECT event_name, actual, expected, previous, scale, release_date, "
+                "direction, source FROM events "
+                "ORDER BY release_date DESC, id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
 
     # ---- 资金流向 ----
-    def add_flow(self, flow_type: str, date: str, value: float,
-                 scale: float = 30000) -> None:
+    def upsert_flow(self, flow_type: str, date: str, value: float,
+                    scale: float = 30000, *, source: str = "manual",
+                    raw_json: str | None = None) -> None:
+        """按 (类型, 日期) 去重，供 COT / ETF 每周自动刷新使用。"""
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO flows (flow_type, as_of_date, value, scale, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (flow_type, str(date), float(value), float(scale),
+                "DELETE FROM flows WHERE flow_type = ? AND as_of_date = ?",
+                (flow_type, str(date)),
+            )
+            conn.execute(
+                "INSERT INTO flows (flow_type, as_of_date, value, scale, source, "
+                "raw_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (flow_type, str(date), float(value), float(scale), source, raw_json,
                  datetime.now().isoformat(timespec="seconds")),
             )
+
+    def add_flow(self, flow_type: str, date: str, value: float,
+                 scale: float = 30000) -> None:
+        self.upsert_flow(flow_type, date, value, scale)
 
     def flows(self, limit: int = 100) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT flow_type, as_of_date, value, scale FROM flows "
-                "ORDER BY as_of_date DESC, id DESC LIMIT ?",
+                "SELECT flow_type, as_of_date, value, scale, source, raw_json "
+                "FROM flows ORDER BY as_of_date DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ---- FOMC 官方文件索引 ----
+    def upsert_fomc_documents(self, docs: list[dict]) -> int:
+        saved = 0
+        with self._connect() as conn:
+            for doc in docs:
+                cur = conn.execute(
+                    "INSERT OR REPLACE INTO fomc_documents "
+                    "(doc_type, doc_date, title, url, source, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (doc["doc_type"], doc["date"], doc.get("title", ""),
+                     doc["url"], doc.get("source", "Federal Reserve"),
+                     datetime.now().isoformat(timespec="seconds")),
+                )
+                saved += max(cur.rowcount, 0)
+        return saved
+
+    def fomc_documents(self, limit: int = 12) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT doc_type, doc_date, title, url FROM fomc_documents "
+                "ORDER BY doc_date DESC, doc_type LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]

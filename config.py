@@ -100,15 +100,47 @@ CLOUD_AI_API_KEY = env("CLOUD_AI_API_KEY")
 CLOUD_AI_MODEL = env("CLOUD_AI_MODEL", "qwen/qwen3-8b:free")
 CLOUD_AI_TIMEOUT = int(env("CLOUD_AI_TIMEOUT", "30"))
 
-# ---- FRED 序列 ----
+# ---- 宏观序列（含 FRED / Yahoo / BLS 等多种免费来源）----
 SERIES = {
-    "DFII10": {"name": "10年期实际收益率", "unit": "%", "stale_days": 10},
-    "DGS2": {"name": "2年期国债收益率", "unit": "%", "stale_days": 10},
-    "DGS10": {"name": "10年期国债收益率", "unit": "%", "stale_days": 10},
-    "T10YIE": {"name": "10年期通胀预期", "unit": "%", "stale_days": 10},
-    "DTWEXBGS": {"name": "美元广义贸易加权指数", "unit": "点", "stale_days": 10},
-    "DFF": {"name": "有效联邦基金利率", "unit": "%", "stale_days": 10},
+    "DFII10": {"name": "10年期实际收益率", "unit": "%", "stale_days": 10, "source": "fred"},
+    "DGS2": {"name": "2年期国债收益率", "unit": "%", "stale_days": 10, "source": "fred"},
+    "DGS10": {"name": "10年期国债收益率", "unit": "%", "stale_days": 10, "source": "fred"},
+    "T10YIE": {"name": "10年期通胀预期", "unit": "%", "stale_days": 10, "source": "fred"},
+    "DTWEXBGS": {"name": "美元广义贸易加权指数", "unit": "点", "stale_days": 10, "source": "fred"},
+    "DFF": {"name": "有效联邦基金利率", "unit": "%", "stale_days": 10, "source": "fred"},
+    "DXY": {"name": "美元指数 DXY", "unit": "点", "stale_days": 10, "source": "yahoo"},
+    "PCEPI": {"name": "PCE物价指数(整体)", "unit": "点", "stale_days": 100,
+              "source": "fred", "agency": "BEA", "change_label": "月度变化"},
+    "PCEPILFE": {"name": "核心PCE物价指数", "unit": "点", "stale_days": 100,
+                 "source": "fred", "agency": "BEA", "change_label": "月度变化"},
+    "ICSA": {"name": "初请失业金人数", "unit": "千人", "stale_days": 14,
+             "source": "fred", "agency": "美国劳工部", "change_label": "周度变化"},
+    "CPI_YOY": {"name": "CPI同比", "unit": "%", "stale_days": 100,
+                "source": "bls", "change_label": "月度变化"},
+    "CORE_CPI_YOY": {"name": "核心CPI同比", "unit": "%", "stale_days": 100,
+                     "source": "bls", "change_label": "月度变化"},
+    "NFP_CHG": {"name": "非农就业变动", "unit": "千人", "stale_days": 100,
+                "source": "bls", "change_label": "月度变化"},
 }
+
+# 新增免费数据源的公开入口（可在 .env 覆盖，便于换镜像）
+BLS_API_URL = env("BLS_API_URL", "https://api.bls.gov/publicAPI/v1/timeseries/data/")
+CFTC_HISTORY_URL = env("CFTC_HISTORY_URL", "https://www.cftc.gov/files/dea/history/")
+FOMC_CALENDAR_URL = env("FOMC_CALENDAR_URL", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm")
+WGC_API_BASE = env("WGC_API_BASE", "https://fsapi.gold.org/api/v11/charts/etfv2/revised")
+FEDWATCH_ARCHIVE_URL = env(
+    "FEDWATCH_ARCHIVE_URL",
+    "https://raw.githubusercontent.com/zuowood1234/cme-fedwatch-tracker/main/data/daily/{date}.json",
+)
+YHOO_DXY_URL = env(
+    "YHOO_DXY_URL",
+    "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?range=1mo&interval=1d",
+)
+# Yahoo 限流时使用欧洲央行公开汇率按 ICE DXY 权重计算的近似值（免费、无 Key）
+FRANKFURTER_URL = env(
+    "FRANKFURTER_URL",
+    "https://api.frankfurter.dev/v1/{start}..?base=USD&symbols=EUR,JPY,GBP,CAD,SEK,CHF",
+)
 
 # ---- 100 分制评分权重 ----
 WEIGHTS = {

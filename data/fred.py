@@ -127,7 +127,10 @@ def fetch_observations(series_id: str, api_key: str | None = None, limit: int = 
 def collect(db, series_ids: list[str] | None = None, api_key: str | None = None) -> dict:
     """抓取 configured 序列并写入 SQLite，返回每个序列的结果摘要。"""
     summary: dict[str, dict] = {}
-    for series_id in series_ids or list(SERIES):
+    # DXY(Yahoo) / CPI(BLS) 等非 FRED 序列由各自采集器负责
+    for series_id in series_ids or [
+        sid for sid, meta in SERIES.items() if meta.get("source", "fred") == "fred"
+    ]:
         try:
             rows = fetch_observations(series_id, api_key=api_key)
             saved = db.upsert_observations(series_id, rows)
