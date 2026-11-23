@@ -19,6 +19,7 @@ TABLES = (
     "flows",
     "fomc_documents",
     "technical_reports",
+    "gex_snapshots",
     "reports",
     "alert_log",
 )
@@ -102,6 +103,24 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_technical_reports_lookup
                     ON technical_reports (report_date DESC, symbol);
+                CREATE TABLE IF NOT EXISTS gex_snapshots (
+                    source TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    as_of_date TEXT NOT NULL,
+                    spot REAL,
+                    net_gex REAL,
+                    gamma_flip REAL,
+                    call_wall REAL,
+                    put_wall REAL,
+                    regime TEXT,
+                    summary TEXT,
+                    payload TEXT,
+                    raw_json TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (source, symbol, as_of_date)
+                );
+                CREATE INDEX IF NOT EXISTS idx_gex_snapshots_lookup
+                    ON gex_snapshots (as_of_date DESC, symbol);
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     score REAL NOT NULL,
@@ -320,6 +339,51 @@ class Database:
             sql += " WHERE symbol = ?"
             params.append(symbol)
         sql += " ORDER BY report_date DESC, created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["payload"] = json.loads(item["payload"] or "{}")
+            except (TypeError, ValueError):
+                item["payload"] = {}
+            result.append(item)
+        return result
+
+    # ---- GEX / Gamma flip 快照 ----
+    def upsert_gex_snapshot(
+        self, source: str, symbol: str, date: str, spot: float,
+        net_gex: float, gamma_flip: float | None, call_wall: float | None,
+        put_wall: float | None, regime: str, summary: str,
+        payload: dict | str, raw_json: str | None = None,
+    ) -> None:
+        payload_text = payload if isinstance(payload, str) else json.dumps(
+            payload or {}, ensure_ascii=False
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO gex_snapshots "
+                "(source, symbol, as_of_date, spot, net_gex, gamma_flip, call_wall, "
+                " put_wall, regime, summary, payload, raw_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (source, symbol, str(date), spot, net_gex, gamma_flip,
+                 call_wall, put_wall, regime, summary, payload_text, raw_json,
+                 datetime.now().isoformat(timespec="seconds")),
+            )
+
+    def gex_snapshots(self, symbol: str | None = None, limit: int = 8) -> list[dict]:
+        sql = (
+            "SELECT source, symbol, as_of_date, spot, net_gex, gamma_flip, "
+            "call_wall, put_wall, regime, summary, payload, raw_json, created_at "
+            "FROM gex_snapshots"
+        )
+        params: list = []
+        if symbol:
+            sql += " WHERE symbol = ?"
+            params.append(symbol)
+        sql += " ORDER BY as_of_date DESC, symbol ASC, created_at DESC LIMIT ?"
         params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()

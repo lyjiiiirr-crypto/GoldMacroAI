@@ -9,6 +9,7 @@
    python main.py --sync-only        # 只采集全部免费数据源并入库
    python main.py --demo             # 无密钥演示完整报告
   python main.py --import-technical-report --summary "..." --bias 偏多 --date 2026-11-23
+   python main.py --import-gex --gex-json gex_snapshot.json
    python main.py --listen           # 本地轮询 Telegram 命令
 """
 from __future__ import annotations
@@ -22,7 +23,7 @@ from pathlib import Path
 from config import TECHNICAL_SYMBOLS
 
 from analysis.gold_bias import bias_label
-from alerts.message_templates import render_daily_report
+from alerts.message_templates import render_daily_report, render_gex_lines
 from alerts.telegram_bot import COMMANDS, poll_commands
 from data.calendar import format_calendar
 from data.fedwatch import format_snapshot
@@ -50,8 +51,8 @@ def set_env_value(key: str, value: str) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def load_technical_json(raw: str) -> dict:
-    """读取手动技术面报告：支持 JSON 字符串或 .json 文件路径（对象/对象数组）。"""
+def load_json_object(raw: str) -> dict:
+    """读取手动 JSON：支持 JSON 字符串或 .json 文件路径（对象/对象数组）。"""
     path = Path(raw)
     text = path.read_text(encoding="utf-8-sig") if path.exists() else raw
     data = json.loads(text)
@@ -112,6 +113,9 @@ def command_handler(command: str, message: dict) -> str:
             lines.append(str(report["summary"]))
         lines.append(report.get("disclaimer") or "本地自算技术面，仅供研究。")
         return "\n".join(lines)
+    if command == "/gex":
+        gex = market.get("gex") or []
+        return "\n".join(render_gex_lines(gex, limit=4))
     if command == "/report":
         return render_daily_report(score, {"text": "请把本机 --report 输出的 AI 分析粘贴到此处。", "source": "rule"}, market)
     return "未知命令，发送 /help 查看可用命令。"
@@ -133,6 +137,8 @@ def parse_args() -> argparse.Namespace:
     action.add_argument("--import-flow", action="store_true", help="录入 COT/ETF 资金流向")
     action.add_argument("--import-technical-report", action="store_true",
                         help="录入技术面报告（支持 --report-json 文件或 JSON 字符串）")
+    action.add_argument("--import-gex", action="store_true",
+                        help="录入 GEX/Gamma flip 快照（支持 --gex-json 文件或 JSON 字符串）")
     action.add_argument("--setup-ntfy", action="store_true", help="生成免注册 ntfy.sh 推送主题并写入 .env")
     action.add_argument("--telegram-id", action="store_true", help="用 Bot Token 查询你的 Telegram chat_id")
     parser.add_argument("--no-collect", action="store_true", help="跳过 FRED 联网，仅用本地缓存")
@@ -161,6 +167,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--summary", default="", help="技术面报告摘要")
     parser.add_argument("--report-json", default="",
                         help="技术面报告 JSON 字符串或 .json 文件路径（含 summary/bias 字段）")
+    parser.add_argument("--gex-json", default="",
+                        help="GEX 快照 JSON 字符串或 .json 文件路径（快照结构或 Yahoo 期权链响应）")
+    parser.add_argument("--rate", type=float, default=0.0,
+                        help="导入原始期权链时使用的无风险利率，默认 0")
     parser.add_argument("--token", help="Telegram Bot Token（仅 --telegram-id 使用）")
     return parser.parse_args()
 
@@ -212,7 +222,7 @@ def main() -> int:
         raw_json = None
         if args.report_json:
             try:
-                data = load_technical_json(args.report_json)
+                data = load_json_object(args.report_json)
             except (OSError, ValueError) as exc:
                 print(f"技术面报告 JSON 解析失败：{exc}")
                 return 2
@@ -242,6 +252,53 @@ def main() -> int:
             payload=payload, raw_json=raw_json,
         )
         print(f"技术面报告已保存：{report_symbol} {report_date}（{bias}，来源 {source}）")
+        return 0
+    if args.import_gex:
+        if not args.gex_json:
+            print("需要 --gex-json（GEX 快照 JSON 字符串或 .json 文件路径）")
+            return 2
+        try:
+            data = load_json_object(args.gex_json)
+        except (OSError, ValueError) as exc:
+            print(f"GEX JSON 解析失败：{exc}")
+            return 2
+        from data.gex import build_snapshot, parse_cboe_chain, parse_option_chain
+
+        if isinstance(data.get("data"), dict) and "options" in data["data"]:
+            # 原始 Cboe 延迟期权报价响应：本地计算 GEX 快照
+            gex_symbol = str(data.get("symbol") or args.symbol or "GLD")
+            spot, series = parse_cboe_chain(data)
+        elif "optionChain" in data:
+            # 原始 Yahoo 期权链响应（历史兼容）：本地计算 GEX 快照
+            gex_symbol = str(data.get("symbol") or args.symbol or "GLD")
+            spot, series = parse_option_chain(data)
+        else:
+            spot, series = 0.0, []
+        if spot > 0 and series:
+            snap = build_snapshot(gex_symbol, series, spot, args.rate)
+        else:
+            if "optionChain" not in data and not (
+                    isinstance(data.get("data"), dict) and "options" in data["data"]):
+                snap = dict(data)  # 已是快照结构
+            else:
+                print("期权链响应中没有有效的现货价 / 期权序列")
+                return 2
+        gex_symbol = str(snap.get("symbol") or args.symbol or "GLD")
+        snap["symbol"] = gex_symbol
+        snap["as_of"] = str(snap.get("as_of") or snap.get("as_of_date")
+                            or args.date or date.today().isoformat())
+        gex_source = args.source or "manual"
+        db.upsert_gex_snapshot(
+            source=gex_source, symbol=gex_symbol, date=snap["as_of"],
+            spot=float(snap.get("spot") or 0),
+            net_gex=float(snap.get("net_gex") or 0),
+            gamma_flip=snap.get("gamma_flip"),
+            call_wall=snap.get("call_wall"), put_wall=snap.get("put_wall"),
+            regime=str(snap.get("regime") or "中性Gamma"),
+            summary=str(snap.get("summary") or ""),
+            payload=snap, raw_json=json.dumps(data, ensure_ascii=False),
+        )
+        print(f"GEX 快照已保存：{gex_symbol} {snap['as_of']}（{snap['regime']}，来源 {gex_source}）")
         return 0
     if args.setup_ntfy:
         topic = f"goldmacroai-{uuid.uuid4().hex[:12]}"

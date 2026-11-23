@@ -58,12 +58,13 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | CFTC COT 自动采集 | 官方年度 ZIP，解析 COMEX 黄金 Managed Money 净多头、多空持仓与未平仓量 |
 | WGC ETF 自动采集 | 公开图表接口，按周汇总全球持仓吨数与资金流，保留分项数据 |
 | 技术面报告（本地自算） | Yahoo Finance 公开行情 `GC=F` 日线，自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
+| GEX 地图 / Gamma 翻转点 | Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），用 IV + 未平仓量按 Black-Scholes 本地估算 GEX、gamma flip 与对冲压力方向；延迟/近似值，**非交易信号、不参与宏观评分**，可人工导入 |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
 | 时效性控制 | 每条数据记录观测日期；过期数据不参与打分，并降低置信度 |
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
-| 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/bias` `/report` `/help` |
+| 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/bias` `/report` `/help` |
 | 定时任务 | GitHub Actions 每 6 小时运行，历史数据库自动保存回仓库 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
@@ -81,6 +82,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | COT | [CFTC 官方历史 ZIP](https://www.cftc.gov/files/dea/history/) | COMEX 黄金 Managed Money 净多头；每周发布日期滞后约 3 天 |
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
 | 黄金技术面 | Yahoo Finance 公开行情 `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
+| GEX / Gamma flip | [Cboe 免费延迟期权报价](https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json) `GLD`、`SPY`（`GEX_SYMBOLS` 可配置） | 免费公开接口，约 15 分钟延迟，单次请求返回整条链（含未平仓量 / IV / gamma）。Yahoo 免费链现网未平仓量常为 0，故改用 Cboe；本项目用 IV 本地按 Black-Scholes 估算（IV 缺失时回退 Cboe gamma）。GEX = Γ×OI×100×S²×0.01（看涨为正、看跌为负），flip 由整条链重定价找净 GEX 过零点。**数据延迟、未含真实做市商库存，仅作研究背景，非交易信号** |
 
 ## 目录结构
 
@@ -92,7 +94,7 @@ GoldMacroAI/
 ├── requirements-dashboard.txt  仪表盘可选依赖
 ├── .env.example
 ├── data/                       fred.py / common.py / fedwatch.py / fedwatch_auto.py
-│                               dxy.py / macro_auto.py / cot.py / etf.py / fomc.py / technical.py / calendar.py
+│                               dxy.py / macro_auto.py / cot.py / etf.py / fomc.py / technical.py / gex.py / calendar.py
 ├── analysis/                   data_cleaner.py / macro_score.py / gold_bias.py / ai_interpreter.py
 ├── alerts/                     telegram_bot.py / message_templates.py / alert_rules.py
 ├── database/                   models.py（SQLite，运行时生成 gold_macro.db）
@@ -173,7 +175,15 @@ python main.py --import-technical-report --date 2026-11-23 --symbol GC=F --bias 
 
 # 或用 JSON 文件一次导入完整结构化报告（可含 indicators / levels / signals）
 python main.py --import-technical-report --date 2026-11-23 --report-json my_technical_report.json
+
+# GEX 快照：自动采集失败时手动录入（可传快照 JSON，也可直接传期权链原始 JSON 由本地计算）
+# 快照结构（symbol/spot/net_gex/gamma_flip/regime/summary 等，来源默认 manual，与自动来源并存）
+python main.py --import-gex --date 2026-11-23 --gex-json gex_snapshot.json
+# 原始期权链响应（Cboe data.options 或 Yahoo optionChain.result[0]）→ 本地计算 GEX / flip
+python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rate 0.04
 ```
+
+GEX 报告中会明确标注「Yahoo 延迟期权链 + 本地 Black-Scholes 估算、非做市商真实库存、非交易信号」；`gex_snapshots` 表按（来源、标的、日期）幂等写入，人工导入与自动采集互不覆盖。
 
 未来 24 小时经济事件：复制 `data/calendar.example.json` 为 `data/calendar.json` 并按自己的日历修改。
 

@@ -14,6 +14,48 @@ def china_now() -> datetime:
     return datetime.now(timezone(timedelta(hours=CHINA_TIMEZONE_OFFSET_HOURS)))
 
 
+GEX_SYMBOL_LABELS = {
+    "GLD": "GLD 黄金ETF代理",
+    "SPY": "SPY 大盘风险偏好",
+}
+
+
+def render_gex_lines(gex: list[dict], *, limit: int = 2) -> list[str]:
+    """渲染 GEX / Gamma flip 摘要，日报与 /gex 命令共用。"""
+    lines = ["<b>GEX / Gamma 翻转点（延迟近似）</b>"]
+    if not gex:
+        lines.append("  - 暂无 GEX 数据（运行 --sync-only 或 --import-gex 导入）")
+        return lines
+    for row in gex[:limit]:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        symbol = str(row.get("symbol") or payload.get("symbol") or "")
+        label = payload.get("label") or GEX_SYMBOL_LABELS.get(symbol, symbol)
+        as_of = row.get("as_of_date") or payload.get("as_of") or ""
+        regime = row.get("regime") or payload.get("regime") or ""
+        head = f"- {ESC(str(label))}（{ESC(str(as_of))}）：{ESC(str(regime))}"
+        lines.append(head)
+        summary = row.get("summary") or payload.get("summary") or ""
+        if summary:
+            lines.append("  " + ESC(str(summary)))
+        spot = row.get("spot") if row.get("spot") is not None else payload.get("spot")
+        flip = row.get("gamma_flip") if row.get("gamma_flip") is not None else payload.get("gamma_flip")
+        call_wall = row.get("call_wall") if row.get("call_wall") is not None else payload.get("call_wall")
+        put_wall = row.get("put_wall") if row.get("put_wall") is not None else payload.get("put_wall")
+        bits = []
+        if spot is not None:
+            bits.append(f"现价 {float(spot):.2f}")
+        if flip is not None:
+            bits.append(f"flip {float(flip):.2f}")
+        if call_wall is not None:
+            bits.append(f"Call墙 {float(call_wall):.2f}")
+        if put_wall is not None:
+            bits.append(f"Put墙 {float(put_wall):.2f}")
+        if bits:
+            lines.append("  " + ESC("；".join(bits)))
+    lines.append("  <i>来源：Cboe 免费延迟期权报价 + 本地 Black-Scholes 估算，非做市商真实库存，非交易信号。</i>")
+    return lines
+
+
 def render_daily_report(score, analysis: dict, market: dict | None = None) -> str:
     market = market or {}
     now = china_now()
@@ -107,6 +149,10 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
             if bits:
                 lines.append("  " + ESC("；".join(bits)))
         lines.append("  <i>来源：Yahoo Finance 公开行情 + 本地规则计算，非 Trading Central 官方研报。</i>")
+
+    gex = market.get("gex") or []
+    if gex:
+        lines += [""] + render_gex_lines(gex, limit=2)
 
     calendar = market.get("calendar") or []
     if calendar:

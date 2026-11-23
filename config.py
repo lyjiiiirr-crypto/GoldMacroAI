@@ -144,6 +144,27 @@ YHOO_TECH_URL = env(
 TECHNICAL_SYMBOLS = tuple(
     s.strip() for s in env("TECHNICAL_SYMBOLS", "GC=F").split(",") if s.strip()
 )
+# GEX / Gamma flip：Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），延迟近似估算
+# Cboe 单次请求即返回整条链（含 open_interest / gamma / iv），比 Yahoo 免费链更完整
+CBOE_OPTIONS_URL = env(
+    "CBOE_OPTIONS_URL",
+    "https://cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json",
+)
+# Yahoo 期权链仅保留给历史/手动导入兼容（现网 open_interest 常为 0，不作为自动源）
+YHOO_OPTIONS_BASE_URL = env(
+    "YHOO_OPTIONS_BASE_URL",
+    "https://query1.finance.yahoo.com/v7/finance/options/{symbol}",
+)
+YHOO_OPTIONS_URL = env(
+    "YHOO_OPTIONS_URL",
+    "https://query1.finance.yahoo.com/v7/finance/options/{symbol}?date={date}",
+)
+GEX_SYMBOLS = tuple(
+    s.strip() for s in env("GEX_SYMBOLS", "GLD,SPY").split(",") if s.strip()
+)
+# 只取近月到期日：近月 gamma 占主导，避免远月噪声；可按需调高。
+GEX_MAX_DAYS = int(env("GEX_MAX_DAYS", "90"))
+GEX_GRID_STEPS = int(env("GEX_GRID_STEPS", "161"))
 # Yahoo 限流时使用欧洲央行公开汇率按 ICE DXY 权重计算的近似值（免费、无 Key）
 FRANKFURTER_URL = env(
     "FRANKFURTER_URL",

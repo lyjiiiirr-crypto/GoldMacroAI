@@ -19,6 +19,7 @@ from data.fedwatch import change_pp, format_snapshot
 from data.fedwatch_auto import collect as collect_fedwatch
 from data.fomc import collect as collect_fomc
 from data.fred import collect as collect_fred
+from data.gex import collect as collect_gex
 from data.macro_auto import collect as collect_macro
 from data.technical import collect as collect_technical
 from database.models import Database
@@ -44,6 +45,7 @@ def collect_all(db: Database) -> dict:
         ("WGC_ETF", collect_etf),
         ("FOMC", collect_fomc),
         ("Technical", collect_technical),
+        ("GEX", collect_gex),
     )
     for name, func in collectors:
         try:
@@ -212,8 +214,9 @@ def build_market(db: Database) -> tuple[dict, dict]:
         "next_meeting": (fed or {}).get("meeting_date", ""),
         "documents": docs,
     }
-    # 技术面只作为报告上下文展示，不参与宏观评分
+    # 技术面 / GEX 只作为报告上下文展示，不参与宏观评分
     market["technical"] = db.technical_reports(limit=12)
+    market["gex"] = db.gex_snapshots(limit=8)
     market["calendar"] = upcoming_events(hours=24)
     return market, inputs
 
@@ -259,6 +262,40 @@ def demo_market() -> tuple[dict, dict]:
             "summary": f"日线偏多：收盘 3623.50，RSI14 58.2；MACD 柱 +12.40；支撑 3560.00 / 3520.00，阻力 3680.00 / 3720.00。",
             "disclaimer": "本地自算技术面，数据来自 Yahoo Finance 公开行情；非 Trading Central 官方研报，不构成投资建议。",
         }],
+        "gex": [
+            {
+                "source": "Cboe 免费延迟期权报价（本地 GEX 估算）",
+                "symbol": "GLD", "as_of_date": today, "spot": 322.87,
+                "net_gex": 185_000_000, "gamma_flip": 318.4,
+                "call_wall": 330.0, "put_wall": 315.0, "regime": "正Gamma",
+                "summary": "净GEX +185M/1%，flip 318.40，现价高于 flip 1.40%；上涨中卖出对冲（压涨），下跌中买入对冲（托底）。",
+                "payload": {
+                    "label": "GLD 黄金ETF代理", "as_of": today, "spot": 322.87,
+                    "net_gex": 185_000_000, "gamma_flip": 318.4,
+                    "call_wall": 330.0, "put_wall": 315.0, "regime": "正Gamma",
+                    "hedging_pressure": "上涨中卖出对冲（压涨），下跌中买入对冲（托底）",
+                    "distance_pct": 1.4, "summary": "净GEX +185M/1%，flip 318.40，现价高于 flip 1.40%；上涨中卖出对冲（压涨），下跌中买入对冲（托底）。",
+                    "gex_map": [],
+                    "disclaimer": "GEX 基于 Cboe 免费延迟期权报价与本地 Black-Scholes 估算，未包含真实交易方向与做市商库存，非交易信号。",
+                },
+            },
+            {
+                "source": "Cboe 免费延迟期权报价（本地 GEX 估算）",
+                "symbol": "SPY", "as_of_date": today, "spot": 585.2,
+                "net_gex": -240_000_000, "gamma_flip": 592.1,
+                "call_wall": 600.0, "put_wall": 575.0, "regime": "负Gamma",
+                "summary": "净GEX -240M/1%，flip 592.10，现价低于 flip 1.16%；上涨中买入对冲（助推），下跌中卖出对冲（杀跌）。",
+                "payload": {
+                    "label": "SPY 大盘风险偏好", "as_of": today, "spot": 585.2,
+                    "net_gex": -240_000_000, "gamma_flip": 592.1,
+                    "call_wall": 600.0, "put_wall": 575.0, "regime": "负Gamma",
+                    "hedging_pressure": "上涨中买入对冲（助推），下跌中卖出对冲（杀跌）",
+                    "distance_pct": -1.16, "summary": "净GEX -240M/1%，flip 592.10，现价低于 flip 1.16%；上涨中买入对冲（助推），下跌中卖出对冲（杀跌）。",
+                    "gex_map": [],
+                    "disclaimer": "GEX 基于 Cboe 免费延迟期权报价与本地 Black-Scholes 估算，未包含真实交易方向与做市商库存，非交易信号。",
+                },
+            },
+        ],
         "calendar": [],
     }
     inputs = {
