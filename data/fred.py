@@ -9,7 +9,6 @@ import csv
 import html as html_lib
 import io
 import json
-import os
 import re
 import subprocess
 import urllib.parse
@@ -58,16 +57,16 @@ def _get_text(url: str, timeout: int) -> str:
     FRED 对带自定义 User-Agent 的请求可能一直挂起，因此 curl 使用默认 UA；
     代理由 config 设置的 HTTPS_PROXY / HTTP_PROXY 环境变量自动提供。
     """
-    if os.name == "nt":
+    for curl_bin in ("curl.exe", "curl"):
         try:
             result = subprocess.run(
-                ["curl.exe", "-sSL", "-m", str(timeout), url],
+                [curl_bin, "-sSL", "-m", str(timeout), url],
                 capture_output=True, timeout=timeout + 10,
             )
             if result.returncode == 0 and result.stdout:
                 return result.stdout.decode("utf-8-sig", errors="replace")
         except Exception:  # noqa: BLE001 - curl 不可用时回退 urllib
-            pass
+            continue
     request = urllib.request.Request(url, headers={"User-Agent": "GoldMacroAI/1.0"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8-sig", errors="replace")
