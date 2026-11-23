@@ -6,15 +6,6 @@ name: GoldMacroAI cloud keeper
 # 全程在 GitHub Actions 云端完成，不依赖本地电脑；公开仓库免费额度内。
 on:
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: '仅验证调度逻辑，不触发日报也不续链'
-        required: false
-        default: 'false'
-      test_seconds:
-        description: '验证用：覆盖等待秒数（0 = 按正常 4 小时节奏）'
-        required: false
-        default: '0'
 
 permissions:
   actions: write
@@ -47,28 +38,18 @@ jobs:
 
       - name: Wait until target
         run: |
-          seconds="${{ inputs.test_seconds }}"
-          if [ -z "$seconds" ] || [ "$seconds" = "0" ]; then
-            seconds="${{ steps.timing.outputs.seconds }}"
-          fi
+          seconds="${{ steps.timing.outputs.seconds }}"
           echo "Waiting $seconds seconds"
           sleep "$seconds"
 
       - name: Dispatch report
         env:
           GH_TOKEN: ${{ github.token }}
-          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [ "$DRY_RUN" = "true" ]; then
-            gh workflow run schedule-probe.yml --repo lyjiiiirr-crypto/GoldMacroAI --ref main
-            echo "Dry-run heartbeat dispatched at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          else
-            gh workflow run gold-macro.yml --repo lyjiiiirr-crypto/GoldMacroAI --ref main
-            echo "Macro report dispatched at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          fi
+          gh workflow run gold-macro.yml --repo lyjiiiirr-crypto/GoldMacroAI --ref main
+          echo "Macro report dispatched at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 
       - name: Chain next keeper run
-        if: ${{ inputs.dry_run != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
