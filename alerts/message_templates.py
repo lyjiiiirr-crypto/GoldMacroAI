@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from analysis.gold_bias import DISCLAIMER, bias_label, score_bar
 from analysis.tech_gex_fusion import fuse, gex_bias
 from config import CHINA_TIMEZONE_OFFSET_HOURS, SERIES
+from data.crt import p3_vs_p2
 
 ESC = html.escape
 
@@ -84,6 +85,81 @@ def render_fusion_lines(fusion: dict) -> list[str]:
     return lines
 
 
+def _crt_p3_view(row: dict) -> dict:
+    """取 CRT 快照的 P3/P2 视图；旧快照缺字段时用 3 根 K 线重算。"""
+    data = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+
+    def pick(key, default=None):
+        value = row.get(key)
+        return value if value is not None else data.get(key, default)
+
+    view = {
+        "label": pick("label") or row.get("symbol") or "",
+        "as_of": pick("as_of"),
+        "scenario": pick("scenario") or "待确认",
+        "bias": pick("bias") or "中性",
+        "target": pick("target"),
+        "stop_ref": pick("stop_ref"),
+        "summary": pick("summary"),
+        "range_high": pick("range_high", pick("prev_high")),
+        "range_low": pick("range_low", pick("prev_low")),
+        "equilibrium": pick("equilibrium"),
+    }
+    for key in (
+        "p2_high", "p2_low", "p3_high", "p3_low", "p3_close",
+        "p3_sweep_side", "p3_swept_p2_high", "p3_swept_p2_low",
+        "p3_reclaimed_p2_range", "p3_reclaim_text",
+        "dist_p3_high_to_p2_high", "dist_p3_low_to_p2_low",
+    ):
+        view[key] = pick(key)
+    if view["p2_high"] is None:
+        view["p2_high"] = pick("sweep_high")
+    if view["p2_low"] is None:
+        view["p2_low"] = pick("sweep_low")
+    if view["p3_high"] is None:
+        view["p3_high"] = pick("current_high")
+    if view["p3_low"] is None:
+        view["p3_low"] = pick("current_low")
+    if view["p3_close"] is None:
+        view["p3_close"] = pick("current_close")
+
+    if view["p3_swept_p2_high"] is None and view["p3_swept_p2_low"] is None:
+        candles = pick("candles") or []
+        if len(candles) >= 3:
+            try:
+                computed = p3_vs_p2(candles[-3:])
+            except (TypeError, ValueError, KeyError):
+                computed = None
+            if computed:
+                for key in (
+                    "p2_high", "p2_low", "p3_high", "p3_low", "p3_close",
+                    "p3_sweep_side", "p3_swept_p2_high", "p3_swept_p2_low",
+                    "p3_reclaimed_p2_range", "p3_reclaim_text",
+                    "dist_p3_high_to_p2_high", "dist_p3_low_to_p2_low",
+                ):
+                    if view[key] is None:
+                        view[key] = computed[key]
+                # 旧快照的 P1 版情景与新规则冲突，以重算结果为准
+                view["scenario"] = computed["p3_scenario"]
+                view["bias"] = computed["p3_bias"]
+                view["target"] = computed["p3_target"]
+                view["stop_ref"] = computed["p3_stop_ref"]
+    return view
+
+
+def _p3_sweep_text(view: dict) -> str:
+    """供 /crt 与执行提醒共用的扫荡描述。"""
+    swept_high = bool(view.get("p3_swept_p2_high"))
+    swept_low = bool(view.get("p3_swept_p2_low"))
+    if swept_high and swept_low:
+        return "同时扫过 P2 高低点"
+    if swept_high:
+        return "扫过 P2 高点"
+    if swept_low:
+        return "扫过 P2 低点"
+    return "未扫过 P2 高低点"
+
+
 def render_crt_lines(crt: list[dict], *, limit: int = 2) -> list[str]:
     """渲染 4H CRT 三根结构摘要（/crt 命令用，日报在执行提醒中引用）。"""
     lines = ["<b>4H CRT 三根结构（UTC 02/06/... 收线，近似）</b>"]
@@ -104,40 +180,37 @@ def render_crt_lines(crt: list[dict], *, limit: int = 2) -> list[str]:
             return "—"
 
     for row in crt[:limit]:
-        data = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-
-        def pick(key, default=None):
-            value = row.get(key)
-            return value if value is not None else data.get(key, default)
-
-        label = pick("label") or row.get("symbol") or ""
-        as_of = str(pick("as_of") or "")[:16]
+        view = _crt_p3_view(row)
+        as_of = str(view["as_of"] or "")[:16]
         lines.append(
-            f"- {ESC(str(label))}（{ESC(as_of)}）：{ESC(str(pick('scenario') or '待确认'))}"
+            f"- {ESC(str(view['label']))}（{ESC(as_of)}）："
+            f"{ESC(str(view['scenario']))}（{ESC(str(view['bias']))}）"
         )
         lines.append(
-            f"  P1 区间 高 {num(pick('range_high', pick('prev_high')))}"
-            f" / 低 {num(pick('range_low', pick('prev_low')))}（阻力/支撑）"
+            f"  P1 背景区间 高 {num(view['range_high'])} / 低 {num(view['range_low'])}"
+            "（历史参考，不再作为当前目标）"
         )
         lines.append(
-            f"  P2 扫荡 高 {num(pick('sweep_high'))}"
-            f"（距阻力 {signed(pick('dist_sweep_high_to_resistance'))} 点）"
-            f" / 低 {num(pick('sweep_low'))}"
-            f"（距支撑 {signed(pick('dist_sweep_low_to_support'))} 点）"
+            f"  P2 当前区间 高 {num(view['p2_high'])} / 低 {num(view['p2_low'])}"
         )
         lines.append(
-            f"  P3 扩张 高 {num(pick('current_high'))}"
-            f"（距阻力 {signed(pick('dist_high_to_resistance'))} 点）"
-            f" / 低 {num(pick('current_low'))}"
-            f"（距支撑 {signed(pick('dist_low_to_support'))} 点）"
+            f"  P3 高 {num(view['p3_high'])}（距 P2 高点 "
+            f"{signed(view['dist_p3_high_to_p2_high'])} 点）/ "
+            f"低 {num(view['p3_low'])}（距 P2 低点 "
+            f"{signed(view['dist_p3_low_to_p2_low'])} 点）：{_p3_sweep_text(view)}"
         )
-        if pick("target") is not None and pick("stop_ref") is not None:
-            lines.append(
-                f"  目标（P1 远端）{num(pick('target'))}；"
-                f"止损参考（P2 影线外）{num(pick('stop_ref'))}"
-            )
-        if pick("summary"):
-            lines.append("  " + ESC(str(pick("summary"))))
+        lines.append(
+            f"  P3 收盘 {num(view['p3_close'])}：{ESC(str(view['p3_reclaim_text'] or '收回状态未记录'))}"
+        )
+        refs = []
+        if view["target"] is not None:
+            refs.append(f"目标 {num(view['target'])}")
+        if view["stop_ref"] is not None:
+            refs.append(f"失效参考 {num(view['stop_ref'])}")
+        if refs:
+            lines.append("  结构参考：" + "；".join(refs))
+        if view["summary"]:
+            lines.append("  " + ESC(str(view["summary"])))
     lines.append("  <i>来源：TradingView 公开行情优先，Yahoo Finance 公开行情回退；未回测，非交易信号。</i>")
     return lines
 
@@ -175,48 +248,36 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
     crt = market.get("crt") or []
     chart_ready = bool(crt)
     if crt:
-        row = crt[0]
-        data = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-
-        def pick(key, default=None):
-            value = row.get(key)
-            return value if value is not None else data.get(key, default)
-
-        scenario = str(pick("scenario") or "待确认")
-        bias = str(pick("bias") or "中性")
-        range_high = pick("range_high", pick("prev_high"))
-        range_low = pick("range_low", pick("prev_low"))
-        sweep_high, sweep_low = pick("sweep_high"), pick("sweep_low")
-        cur_high, cur_low = pick("current_high"), pick("current_low")
+        view = _crt_p3_view(crt[0])
         lines.append(
-            f"- 4H 结构（北京 {ESC(_beijing_clock(pick('as_of')))} 收线）："
-            f"{ESC(scenario)}（{ESC(bias)}）"
+            f"- 4H 结构（北京 {ESC(_beijing_clock(view['as_of']))} 收线）："
+            f"{ESC(str(view['scenario']))}（{ESC(str(view['bias']))}）"
         )
         lines.append(
-            f"- P1 区间（阻力/支撑）：高 {num(range_high)} / 低 {num(range_low)}"
+            f"- P2 区间（当前参考）：高 {num(view['p2_high'])}"
+            f" / 低 {num(view['p2_low'])}"
         )
-        side = str(pick("sweep_side") or "")
-        if side:
+        lines.append(
+            f"- P3 高低点距 P2 边界：高点距 P2 高点 "
+            f"{signed(view['dist_p3_high_to_p2_high'])} 点"
+            f"（{'已扫过' if view['p3_swept_p2_high'] else '未扫过'}），"
+            f"低点距 P2 低点 {signed(view['dist_p3_low_to_p2_low'])} 点"
+            f"（{'已扫过' if view['p3_swept_p2_low'] else '未扫过'}）"
+        )
+        lines.append(
+            f"- P3 收盘 {num(view['p3_close'])}："
+            f"{ESC(str(view['p3_reclaim_text'] or '收回状态未记录'))}"
+            f"（{num(view['p2_low'])}~{num(view['p2_high'])}）"
+        )
+        refs = []
+        if view["target"] is not None:
+            refs.append(f"目标 {num(view['target'])}")
+        if view["stop_ref"] is not None:
+            refs.append(f"失效参考 {num(view['stop_ref'])}")
+        if refs:
             lines.append(
-                f"- P2 扫{side}并收回区间：高 {num(sweep_high)}"
-                f"（距阻力 {signed(pick('dist_sweep_high_to_resistance'))} 点）"
-                f" / 低 {num(sweep_low)}"
-                f"（距支撑 {signed(pick('dist_sweep_low_to_support'))} 点）"
+                "- 结构参考：" + "；".join(refs) + "（仅为结构位，非挂单建议）"
             )
-        lines.append(
-            f"- P3 高低点距关键位：高点距阻力 "
-            f"{signed(pick('dist_high_to_resistance'))} 点，"
-            f"低点距支撑 {signed(pick('dist_low_to_support'))} 点"
-        )
-        target, stop = pick("target"), pick("stop_ref")
-        if target is not None and stop is not None:
-            lines.append(
-                f"- 目标看 P1 远端 {num(target)}；止损参考 P2 影线外 {num(stop)}"
-                "（仅为结构位，非挂单建议）"
-            )
-        equity = pick("equilibrium")
-        if equity is not None:
-            lines.append(f"- CRT 均衡位：{num(equity)}（区间中轴）")
     else:
         chart_ready = False
         lines.append("- 4H CRT：暂无数据（运行 --sync-only 或 --import-crt 导入）")
@@ -232,7 +293,7 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
             " → 与 4H 情景冲突时降级观望，先等结构确认"
         )
     lines += [
-        "- LTF：4H/15M 参与 P2 扫荡，等收回 + 回测确认再入场，不追价",
+        "- LTF：4H/15M 以 P3 扫荡与收盘是否收回 P2 区间为依据，等回测确认再入场，不追价",
         f"- 宏观（{macro_bias or '方向'}）≠ 入场信号；止损先行，单笔风险可控",
     ]
     if chart_ready:

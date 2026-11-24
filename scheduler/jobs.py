@@ -337,10 +337,16 @@ def demo_market() -> tuple[dict, dict]:
             "dist_high_to_resistance": -10.50, "dist_low_to_support": 4.80,
             "dist_sweep_low_to_support": -7.40, "dist_sweep_high_to_resistance": 2.00,
             "sweep_side": "低", "swept_prev_high": False, "swept_prev_low": True,
-            "scenario": "Power of Three · 偏多确认", "bias": "偏多",
-            "target": 3610.00, "stop_ref": 3568.00,
-            "summary": f"P1 区间 高 3610.00 / 低 3575.40；P2 扫低 3568.00 后收回区间；"
-                       f"P3 扩张 高 3620.50 / 低 3580.20；情景 Power of Three · 偏多确认。",
+            "p2_high": 3608.00, "p2_low": 3568.00,
+            "p3_high": 3620.50, "p3_low": 3580.20, "p3_close": 3605.80,
+            "p3_sweep_side": "高", "p3_swept_p2_high": True, "p3_swept_p2_low": False,
+            "p3_reclaimed_p2_range": True, "p3_reclaim_text": "收盘收回 P2 区间",
+            "dist_p3_high_to_p2_high": 12.50, "dist_p3_low_to_p2_low": 12.20,
+            "scenario": "P3 扫 P2 高点后收回区间 · 偏空反转确认", "bias": "偏空",
+            "target": 3568.00, "stop_ref": 3620.50,
+            "summary": f"P1 背景区间 高 3610.00 / 低 3575.40；"
+                       f"P3 扫 P2 高点 3620.50，收盘 3605.80 已收回 P2 区间（3568.00~3608.00）；"
+                       f"情景 P3 扫 P2 高点后收回区间 · 偏空反转确认（偏空）。",
             "payload": {
                 "label": "现货黄金 XAUUSD", "as_of": f"{today}T10:00:00+00:00",
                 "candles": [

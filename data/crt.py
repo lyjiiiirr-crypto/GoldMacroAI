@@ -1,10 +1,11 @@
 """4H CRT（Candle Range Theory）三根 K 线模型。
 
 HTF 三根结构（ICT 单根 K 线版 Power of Three）：
-  第 1 根：设定区间（range_high / range_low）；
-  第 2 根：扫荡一侧流动性并收回第 1 根区间内；
-  第 3 根：向另一侧扩张，确认方向。
-执行在 LTF（4H/15M）参与扫荡，止损在第 2 根影线之外，目标看第 1 根远端。
+  第 1 根：设定区间（range_high / range_low，仅作历史背景）；
+  第 2 根：扫荡第 1 根一侧流动性并收回，形成当前区间（p2_high / p2_low）；
+  第 3 根：在报告发出时已收线，因此当前有效信号看 P3 是否扫过 P2 高低点、
+    以及 P3 收盘是否收回 P2 区间。
+描述已收线结构，不预测下一根；未回测，非交易信号。
 
 已收盘 4H 优先尝试 TradingView 公开 scanner 的 `[1]/[2]/[3]` 偏移列
 （OANDA:XAUUSD，4H 收线为北京时间 10/14/18/22/02/06，即 UTC 02/06/10/14/18/22）；
@@ -288,6 +289,73 @@ def _history_from_db(db, symbol: str, limit: int = 3) -> list[dict]:
     return candles[-limit:]
 
 
+def p3_vs_p2(candles: list[dict]) -> dict:
+    """P3 已收线时，以 P2 为当前区间判断扫荡与收盘收回。
+
+    报告在 P3 收线后才发出，P1 区间已是历史背景；下一根的有效结构依据
+    是「P3 有没有扫过 P2 高低点」和「P3 收盘有没有收回 P2 区间」。
+    """
+    if len(candles) < 3:
+        raise ValueError("需要至少 3 根已收盘 4H K 线")
+    second, third = candles[-2], candles[-1]
+    p2_high, p2_low = float(second["high"]), float(second["low"])
+    p3_high, p3_low = float(third["high"]), float(third["low"])
+    p3_close = float(third.get("close") if third.get("close") is not None else third["low"])
+
+    swept_high = p3_high > p2_high
+    swept_low = p3_low < p2_low
+    reclaimed = p2_low <= p3_close <= p2_high
+    # 正数表示 P3 高点仍在 P2 高点之内 / P3 低点仍在 P2 低点之上；
+    # 负数表示已扫过对应边界。
+    dist_high = round(p3_high - p2_high, 2)
+    dist_low = round(p3_low - p2_low, 2)
+
+    if swept_low:
+        sweep_side = "低"
+        if reclaimed:
+            scenario = "P3 扫 P2 低点后收回区间 · 偏多反转确认"
+            bias = "偏多"
+            target, stop_ref = p2_high, p3_low
+        else:
+            scenario = "P3 扫 P2 低点后未收回 · 偏空延续"
+            bias = "偏空"
+            target, stop_ref = None, p2_low
+    elif swept_high:
+        sweep_side = "高"
+        if reclaimed:
+            scenario = "P3 扫 P2 高点后收回区间 · 偏空反转确认"
+            bias = "偏空"
+            target, stop_ref = p2_low, p3_high
+        else:
+            scenario = "P3 扫 P2 高点后未收回 · 偏多延续"
+            bias = "偏多"
+            target, stop_ref = None, p2_high
+    else:
+        sweep_side = None
+        scenario = "P3 未扫 P2 高低点 · 区间内待确认"
+        bias = "中性"
+        target, stop_ref = None, None
+
+    return {
+        "p2_high": round(p2_high, 2),
+        "p2_low": round(p2_low, 2),
+        "p3_high": round(p3_high, 2),
+        "p3_low": round(p3_low, 2),
+        "p3_close": round(p3_close, 2),
+        "p3_sweep_side": sweep_side,
+        "p3_swept_p2_high": swept_high,
+        "p3_swept_p2_low": swept_low,
+        "p3_reclaimed_p2_range": reclaimed,
+        "p3_reclaim_text": "收盘收回 P2 区间" if reclaimed else "收盘未收回 P2 区间",
+        "dist_p3_high_to_p2_high": dist_high,
+        "dist_p3_low_to_p2_low": dist_low,
+        "p3_scenario": scenario,
+        "p3_bias": bias,
+        "p3_target": round(target, 2) if target is not None else None,
+        "p3_stop_ref": round(stop_ref, 2) if stop_ref is not None else None,
+    }
+
+
 def crt_snapshot(symbol: str, candles: list[dict]) -> dict:
     """由至少 3 根已收盘 4H K 线计算三根 CRT 结构与执行参考位。"""
     if len(candles) < 3:
@@ -298,47 +366,40 @@ def crt_snapshot(symbol: str, candles: list[dict]) -> dict:
     cur_high, cur_low = float(c3["high"]), float(c3["low"])
     c2_open, c2_close = float(c2.get("open") or c2["low"]), float(c2.get("close") or c2["low"])
     c3_open, c3_close = float(c3.get("open") or c3["low"]), float(c3.get("close") or c3["low"])
-    span = range_high - range_low
     equilibrium = (range_high + range_low) / 2.0
     body_pct = (round(abs(c3_close - c3_open) / (cur_high - cur_low) * 100.0, 1)
                 if cur_high > cur_low else 0.0)
 
-    # 第 2 根：扫一侧并收回第 1 根区间内
+    # P2 相对 P1 的扫荡仅作历史背景；报告发出时 P3 已收线，
+    # 当前情景/方向/参考位一律由 P3 相对 P2 决定。
     swept_high = sweep_high > range_high and c2_close <= range_high
     swept_low = sweep_low < range_low and c2_close >= range_low
-    # 第 3 根：向另一侧扩张（收盘越过第 2 根收盘，且触及/突破第 2 根影线）
-    expand_up = c3_close > c2_close and (cur_high >= sweep_high or c3_close >= range_high)
-    expand_down = c3_close < c2_close and (cur_low <= sweep_low or c3_close <= range_low)
+    sweep_side = "低" if swept_low else "高" if swept_high else None
+    p3 = p3_vs_p2(candles)
+    scenario, bias = p3["p3_scenario"], p3["p3_bias"]
+    target, stop_ref = p3["p3_target"], p3["p3_stop_ref"]
 
-    if swept_low and expand_up:
-        scenario, bias = "Power of Three · 偏多确认", "偏多"
-        sweep_side, target, stop_ref = "低", range_high, sweep_low
-    elif swept_high and expand_down:
-        scenario, bias = "Power of Three · 偏空确认", "偏空"
-        sweep_side, target, stop_ref = "高", range_low, sweep_high
-    elif swept_low:
-        scenario, bias = "第2根扫低，待第3根扩张", "中性"
-        sweep_side, target, stop_ref = "低", range_high, sweep_low
-    elif swept_high:
-        scenario, bias = "第2根扫高，待第3根扩张", "中性"
-        sweep_side, target, stop_ref = "高", range_low, sweep_high
-    else:
-        scenario, bias = "三根结构待扫荡", "中性"
-        sweep_side, target, stop_ref = None, None, None
-
-    # 点位距离：高低点相对阻力（第 1 根高）/ 支撑（第 1 根低），不相对现价
+    # 旧字段保留兼容（距离为相对 P1 区间，不再用于执行提醒）
     dist_high_to_resistance = round(range_high - cur_high, 2)
     dist_low_to_support = round(cur_low - range_low, 2)
     dist_sweep_low_to_support = round(sweep_low - range_low, 2)
     dist_sweep_high_to_resistance = round(range_high - sweep_high, 2)
 
+    if p3["p3_sweep_side"]:
+        sweep_desc = (
+            f"P3 扫 P2 {p3['p3_sweep_side']}点（高 {p3['p3_high']:.2f} / "
+            f"低 {p3['p3_low']:.2f}），收盘 {p3['p3_close']:.2f} "
+            f"{'已收回' if p3['p3_reclaimed_p2_range'] else '未收回'} P2 区间"
+            f"（{p3['p2_low']:.2f}~{p3['p2_high']:.2f}）"
+        )
+    else:
+        sweep_desc = (
+            f"P3 未扫 P2 高低点（高 {p3['p3_high']:.2f} / 低 {p3['p3_low']:.2f} / "
+            f"收 {p3['p3_close']:.2f}）"
+        )
     summary = (
-        f"P1 区间 高 {range_high:.2f} / 低 {range_low:.2f}；"
-        f"P2 扫荡 高 {sweep_high:.2f} / 低 {sweep_low:.2f}"
-        f"（{'扫低后收回' if swept_low else '扫高后收回' if swept_high else '未扫区间'}）；"
-        f"P3 扩张 高 {cur_high:.2f} / 低 {cur_low:.2f}；"
-        f"高点距阻力 {dist_high_to_resistance:+.2f} 点，低点距支撑 {dist_low_to_support:+.2f} 点；"
-        f"情景 {scenario}（{bias}）。"
+        f"P1 背景区间 高 {range_high:.2f} / 低 {range_low:.2f}；"
+        f"{sweep_desc}；情景 {scenario}（{bias}）。"
     )
     return {
         "source": c3.get("source") or SOURCE_NAME,
@@ -361,6 +422,7 @@ def crt_snapshot(symbol: str, candles: list[dict]) -> dict:
         "sweep_side": sweep_side,
         "swept_prev_high": swept_high,
         "swept_prev_low": swept_low,
+        **p3,
         "dist_high_to_resistance": dist_high_to_resistance,
         "dist_low_to_support": dist_low_to_support,
         "dist_sweep_low_to_support": dist_sweep_low_to_support,

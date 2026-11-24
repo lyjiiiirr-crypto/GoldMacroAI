@@ -92,11 +92,18 @@ class CrtMathTests(unittest.TestCase):
         self.assertEqual(snap["range_low"], 94.0)
         self.assertEqual(snap["sweep_high"], 101.0)
         self.assertTrue(snap["swept_prev_high"])
-        self.assertEqual(snap["sweep_side"], "高")
-        self.assertEqual(snap["scenario"], "Power of Three · 偏空确认")
+        self.assertEqual(snap["sweep_side"], "高")  # P2 相对 P1，仅背景
+        self.assertEqual(snap["p2_high"], 101.0)
+        self.assertEqual(snap["p2_low"], 95.0)
+        self.assertEqual(snap["p3_sweep_side"], "低")
+        self.assertTrue(snap["p3_swept_p2_low"])
+        self.assertFalse(snap["p3_reclaimed_p2_range"])
+        self.assertEqual(snap["scenario"], "P3 扫 P2 低点后未收回 · 偏空延续")
         self.assertEqual(snap["bias"], "偏空")
-        self.assertEqual(snap["target"], 94.0)      # P1 远端
-        self.assertEqual(snap["stop_ref"], 101.0)   # P2 影线外
+        self.assertIsNone(snap["target"])
+        self.assertEqual(snap["stop_ref"], 95.0)   # P2 低点：收回则失效
+        self.assertEqual(snap["dist_p3_low_to_p2_low"], -3.0)
+        self.assertEqual(snap["dist_p3_high_to_p2_high"], -1.0)
         self.assertEqual(snap["dist_high_to_resistance"], 0.0)
         self.assertEqual(snap["dist_low_to_support"], -2.0)
         self.assertEqual(len(snap["candles"]), 3)
@@ -104,11 +111,43 @@ class CrtMathTests(unittest.TestCase):
     def test_crt_bullish_power_of_three(self):
         snap = crt_snapshot("XAUUSD", bullish_bars())
         self.assertEqual(snap["sweep_side"], "低")
-        self.assertEqual(snap["scenario"], "Power of Three · 偏多确认")
+        self.assertEqual(snap["p3_sweep_side"], "高")
+        self.assertTrue(snap["p3_swept_p2_high"])
+        self.assertFalse(snap["p3_reclaimed_p2_range"])
+        self.assertEqual(snap["scenario"], "P3 扫 P2 高点后未收回 · 偏多延续")
         self.assertEqual(snap["bias"], "偏多")
-        self.assertEqual(snap["target"], 100.0)
-        self.assertEqual(snap["stop_ref"], 92.0)
+        self.assertIsNone(snap["target"])
+        self.assertEqual(snap["stop_ref"], 99.0)   # P2 高点：跌回则失效
+        self.assertEqual(snap["dist_p3_high_to_p2_high"], 4.0)
         self.assertEqual(snap["dist_sweep_low_to_support"], -2.0)
+
+    def test_crt_sweep_p2_low_then_reclaim_is_bullish(self):
+        bars = [
+            bar(ts(20, 2), 95, 100, 94, 99),
+            bar(ts(20, 6), 99, 101, 95, 99),   # P2 区间 101 / 95
+            bar(ts(20, 10), 99, 100, 92, 98),  # P3 扫低 92，收盘 98 收回区间
+        ]
+        snap = crt_snapshot("XAUUSD", bars)
+        self.assertTrue(snap["p3_swept_p2_low"])
+        self.assertTrue(snap["p3_reclaimed_p2_range"])
+        self.assertEqual(snap["scenario"], "P3 扫 P2 低点后收回区间 · 偏多反转确认")
+        self.assertEqual(snap["bias"], "偏多")
+        self.assertEqual(snap["target"], 101.0)   # P2 高点
+        self.assertEqual(snap["stop_ref"], 92.0)  # P3 扫荡影线
+
+    def test_crt_sweep_p2_high_then_reclaim_is_bearish(self):
+        bars = [
+            bar(ts(21, 2), 95, 100, 94, 96),
+            bar(ts(21, 6), 96, 99, 92, 98),    # P2 区间 99 / 92
+            bar(ts(21, 10), 98, 103, 96, 95),  # P3 扫高 103，收盘 95 收回区间
+        ]
+        snap = crt_snapshot("XAUUSD", bars)
+        self.assertTrue(snap["p3_swept_p2_high"])
+        self.assertTrue(snap["p3_reclaimed_p2_range"])
+        self.assertEqual(snap["scenario"], "P3 扫 P2 高点后收回区间 · 偏空反转确认")
+        self.assertEqual(snap["bias"], "偏空")
+        self.assertEqual(snap["target"], 92.0)    # P2 低点
+        self.assertEqual(snap["stop_ref"], 103.0) # P3 扫荡影线
 
     def test_crt_pending_when_no_expansion(self):
         bars = [
@@ -117,8 +156,9 @@ class CrtMathTests(unittest.TestCase):
             bar(ts(20, 10), 99, 100, 96, 99.5),
         ]
         snap = crt_snapshot("XAUUSD", bars)
-        self.assertIn("待第3根扩张", snap["scenario"])
+        self.assertIn("未扫 P2 高低点", snap["scenario"])
         self.assertEqual(snap["bias"], "中性")
+        self.assertIsNone(snap["target"])
 
     def test_crt_needs_three_closed_candles(self):
         with self.assertRaises(ValueError):
@@ -177,7 +217,8 @@ class CrtImportTests(unittest.TestCase):
                         "time": "2026-11-20T10:00:00+00:00"},
         })
         self.assertEqual(snap["range_high"], 100.0)
-        self.assertEqual(snap["target"], 94.0)
+        self.assertEqual(snap["p2_high"], 101.0)
+        self.assertIsNone(snap["target"])
 
     def test_snapshot_from_legacy_two_candle_fields(self):
         snap = snapshot_from_data("XAUUSD", {
@@ -235,21 +276,38 @@ class CrtReportTests(unittest.TestCase):
     def setUp(self):
         self.snap = crt_snapshot("XAUUSD", power_of_three_bars())
 
-    def test_execution_lines_include_three_candle_levels(self):
+    def test_execution_lines_focus_on_p3_vs_p2(self):
         text = "\n".join(render_execution_lines({"crt": [self.snap]}))
         self.assertIn("4H CRT 三根结构", text)
-        self.assertIn("P1 区间（阻力/支撑）", text)
-        self.assertIn("P2 扫高并收回区间", text)
-        self.assertIn("P3 高低点距关键位", text)
-        self.assertIn("高点距阻力", text)
-        self.assertIn("低点距支撑", text)
-        self.assertIn("目标看 P1 远端", text)
+        self.assertIn("P2 区间（当前参考）", text)
+        self.assertIn("P3 高低点距 P2 边界", text)
+        self.assertIn("高点距 P2 高点", text)
+        self.assertIn("低点距 P2 低点", text)
+        self.assertIn("P3 收盘", text)
+        self.assertIn("收盘未收回 P2 区间", text)
+        self.assertIn("失效参考", text)
         self.assertIn("4H/15M", text)
         self.assertIn("见随后消息", text)
+        self.assertNotIn("P1 区间（阻力/支撑）", text)
+        self.assertNotIn("目标看 P1 远端", text)
+        self.assertNotIn("CRT 均衡位", text)
+
+    def test_execution_lines_report_reclaim_and_target(self):
+        snap = crt_snapshot("XAUUSD", [
+            bar(ts(20, 2), 95, 100, 94, 99),
+            bar(ts(20, 6), 99, 101, 95, 99),
+            bar(ts(20, 10), 99, 100, 92, 98),
+        ])
+        text = "\n".join(render_execution_lines({"crt": [snap]}))
+        self.assertIn("收盘收回 P2 区间", text)
+        self.assertIn("偏多反转确认", text)
+        self.assertIn("目标 101.00", text)
 
     def test_execution_lines_do_not_use_distance_to_current_price(self):
         text = "\n".join(render_execution_lines({"crt": [self.snap]}))
         self.assertNotIn("距现价", text)
+        self.assertNotIn("距阻力", text)
+        self.assertNotIn("距支撑", text)
 
     def test_execution_lines_without_data_degrades(self):
         text = "\n".join(render_execution_lines({}))
@@ -293,7 +351,9 @@ class CrtReportTests(unittest.TestCase):
     def test_crt_lines_and_command_registered(self):
         text = "\n".join(render_crt_lines([self.snap]))
         self.assertIn("4H CRT 三根结构", text)
-        self.assertIn("P2 扫荡", text)
+        self.assertIn("P2 当前区间", text)
+        self.assertIn("P3 收盘", text)
+        self.assertIn("扫过 P2 低点", text)
         self.assertIn("非交易信号", text)
         self.assertIn("/crt", COMMANDS)
 

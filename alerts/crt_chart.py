@@ -143,7 +143,7 @@ def _beijing_hhmm(value) -> str:
 
 def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
                    target=None, stop=None) -> bytes:
-    """把 3 根 4H K 线渲染为 PNG；levels 为第 1 根区间与结构参考位。"""
+    """把 3 根 4H K 线渲染为 PNG；levels 为 P2 当前区间与结构参考位。"""
     parsed = []
     for item in candles[:3]:
         open_, high, low, close = (
@@ -182,7 +182,7 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
         canvas.hline(left, width - right, y, GRID)
         canvas.text(6, y - 4, f"{price:.2f}", MUTED)
 
-    # 第 1 根区间：阻力（高）与支撑（低）
+    # P2 当前区间：阻力（高）与支撑（低）
     if _number(range_high) is not None:
         y = y_pos(range_high)
         canvas.dash_hline(left, width - right, y, RESIST)
@@ -216,8 +216,8 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
         if candle["time"]:
             canvas.text(center - 14, top + plot_height + 26, candle["time"], MUTED)
 
-    canvas.text(12, 12, "XAUUSD 4H CRT  P1 RANGE / P2 SWEEP / P3 EXPAND", TEXT)
-    canvas.text(12, 30, "BJ CLOSE TIME  R=RESISTANCE S=SUPPORT T=TARGET SL=STOP", MUTED)
+    canvas.text(12, 12, "XAUUSD 4H CRT  P2 RANGE / P3 SWEEP + RECLAIM", TEXT)
+    canvas.text(12, 30, "BJ CLOSE TIME  R=P2 HIGH S=P2 LOW T=TARGET SL=INVALIDATION", MUTED)
     footer = []
     if _number(target) is not None:
         footer.append(f"TARGET {float(target):.2f}")
@@ -242,8 +242,8 @@ def build_crt_chart(market: dict | None) -> bytes | None:
             continue  # 旧版快照不足 3 根，继续找下一条
         return render_crt_png(
             candles[-3:],
-            range_high=pick("range_high", pick("prev_high")),
-            range_low=pick("range_low", pick("prev_low")),
+            range_high=pick("p2_high", pick("sweep_high")),
+            range_low=pick("p2_low", pick("sweep_low")),
             target=pick("target"), stop=pick("stop_ref"),
         )
     return None
