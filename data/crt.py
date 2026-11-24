@@ -310,7 +310,16 @@ def p3_vs_p2(candles: list[dict]) -> dict:
     dist_high = round(p3_high - p2_high, 2)
     dist_low = round(p3_low - p2_low, 2)
 
-    if swept_low:
+    if swept_low and swept_high:
+        # 双向扫荡无法只按一侧给出方向，避免固定按“扫低”优先而误判
+        sweep_side = "双"
+        scenario = (
+            "P3 同时扫 P2 高低点后收回 · 双向扫荡待确认" if reclaimed
+            else "P3 同时扫 P2 高低点但未收回 · 待确认"
+        )
+        bias = "中性"
+        target, stop_ref = None, None
+    elif swept_low:
         sweep_side = "低"
         if reclaimed:
             scenario = "P3 扫 P2 低点后收回区间 · 偏多反转确认"
@@ -386,8 +395,12 @@ def crt_snapshot(symbol: str, candles: list[dict]) -> dict:
     dist_sweep_high_to_resistance = round(range_high - sweep_high, 2)
 
     if p3["p3_sweep_side"]:
+        side_text = (
+            "同时扫 P2 高低点" if p3["p3_sweep_side"] == "双"
+            else f"扫 P2 {p3['p3_sweep_side']}点"
+        )
         sweep_desc = (
-            f"P3 扫 P2 {p3['p3_sweep_side']}点（高 {p3['p3_high']:.2f} / "
+            f"P3 {side_text}（高 {p3['p3_high']:.2f} / "
             f"低 {p3['p3_low']:.2f}），收盘 {p3['p3_close']:.2f} "
             f"{'已收回' if p3['p3_reclaimed_p2_range'] else '未收回'} P2 区间"
             f"（{p3['p2_low']:.2f}~{p3['p2_high']:.2f}）"

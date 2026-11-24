@@ -149,6 +149,23 @@ class CrtMathTests(unittest.TestCase):
         self.assertEqual(snap["target"], 92.0)    # P2 低点
         self.assertEqual(snap["stop_ref"], 103.0) # P3 扫荡影线
 
+    def test_crt_both_sides_swept_stays_neutral(self):
+        bars = [
+            bar(ts(20, 2), 95, 100, 94, 99),
+            bar(ts(20, 6), 99, 101, 95, 99),    # P2 区间 101 / 95
+            bar(ts(20, 10), 99, 103, 93, 98),   # P3 同时扫高低，收盘收回
+        ]
+        snap = crt_snapshot("XAUUSD", bars)
+        self.assertTrue(snap["p3_swept_p2_high"])
+        self.assertTrue(snap["p3_swept_p2_low"])
+        self.assertTrue(snap["p3_reclaimed_p2_range"])
+        self.assertEqual(snap["p3_sweep_side"], "双")
+        self.assertEqual(snap["scenario"], "P3 同时扫 P2 高低点后收回 · 双向扫荡待确认")
+        self.assertEqual(snap["bias"], "中性")
+        self.assertIsNone(snap["target"])
+        self.assertIsNone(snap["stop_ref"])
+        self.assertIn("同时扫 P2 高低点", snap["summary"])
+
     def test_crt_pending_when_no_expansion(self):
         bars = [
             bar(ts(20, 2), 95, 100, 94, 99),
