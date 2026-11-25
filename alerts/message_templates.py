@@ -456,6 +456,7 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
     technical = market.get("technical") or []
     if technical:
         lines += ["", "<b>技术面（本地自算）</b>"]
+        sources: list[str] = []
         for report in technical[:2]:
             label = report.get("label") or report.get("symbol") or "技术面"
             as_of = report.get("as_of") or report.get("report_date") or ""
@@ -481,7 +482,14 @@ def render_daily_report(score, analysis: dict, market: dict | None = None) -> st
                     bits.append(f"{name} " + "/".join(f"{float(v):.2f}" for v in values))
             if bits:
                 lines.append("  " + ESC("；".join(bits)))
-        lines.append("  <i>来源：Yahoo Finance 公开行情 + 本地规则计算，非 Trading Central 官方研报。</i>")
+            payload = report.get("payload")
+            source = report.get("source") or (
+                (payload.get("source") if isinstance(payload, dict) else None)
+            )
+            if source:
+                sources.append(str(source))
+        source_text = " / ".join(dict.fromkeys(sources)) or "公开行情 + 本地规则计算"
+        lines.append(f"  <i>来源：{ESC(source_text)}，非 Trading Central 官方研报。</i>")
 
     gex = market.get("gex") or []
     if gex:

@@ -7,7 +7,7 @@ from data.technical import (
     atr, build_report, macd, parse_yahoo_ohlc, rsi, sma, support_resistance,
 )
 from database.models import Database
-from scheduler.jobs import build_market
+from scheduler.jobs import build_market, prefer_fresh_gold_technical
 
 
 def ms(day: str) -> int:
@@ -94,6 +94,46 @@ class TechnicalParserTests(unittest.TestCase):
         levels = support_resistance(candles, candles[-1]["close"])
         self.assertTrue(all(v < candles[-1]["close"] for v in levels["support"]))
         self.assertTrue(all(v > candles[-1]["close"] for v in levels["resistance"]))
+
+
+class TechnicalSourcePreferenceTests(unittest.TestCase):
+    def test_xaus_hides_stale_yahoo_gold_but_keeps_manual(self):
+        rows = [
+            {"source": "XAUS 公开实时行情 + 本地规则计算", "symbol": "GC=F",
+             "report_date": "2026-11-24"},
+            {"source": "Yahoo Finance 公开行情 + 本地规则计算", "symbol": "GC=F",
+             "report_date": "2026-11-25"},
+            {"source": "manual", "symbol": "GC=F", "report_date": "2026-11-23"},
+            {"source": "Yahoo Finance 公开行情 + 本地规则计算", "symbol": "DX-Y.NYB",
+             "report_date": "2026-11-25"},
+        ]
+        kept = prefer_fresh_gold_technical(rows)
+        self.assertEqual([r["source"] for r in kept], [
+            "XAUS 公开实时行情 + 本地规则计算", "manual",
+            "Yahoo Finance 公开行情 + 本地规则计算",
+        ])
+
+    def test_yahoo_kept_when_xaus_unavailable(self):
+        rows = [{"source": "Yahoo Finance 公开行情 + 本地规则计算",
+                 "symbol": "GC=F", "report_date": "2026-11-25"}]
+        self.assertEqual(prefer_fresh_gold_technical(rows), rows)
+
+    def test_report_shows_actual_technical_source(self):
+        from alerts.message_templates import render_daily_report
+        from analysis.macro_score import compute_score
+
+        market = {"technical": [{
+            "source": "XAUS 公开实时行情 + 本地规则计算",
+            "symbol": "GC=F", "report_date": "2026-11-24",
+            "bias": "偏空", "summary": "测试摘要",
+            "payload": {"source": "XAUS 公开实时行情 + 本地规则计算",
+                        "indicators": {}, "levels": {}},
+        }]}
+        text = render_daily_report(
+            compute_score({}), {"text": "测试", "source": "rule"}, market
+        )
+        self.assertIn("来源：XAUS 公开实时行情 + 本地规则计算", text)
+        self.assertNotIn("来源：Yahoo Finance", text)
 
 
 class TechnicalDatabaseTests(unittest.TestCase):

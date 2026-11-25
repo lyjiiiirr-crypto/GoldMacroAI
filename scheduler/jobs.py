@@ -29,6 +29,28 @@ from database.models import Database
 
 RATE_SERIES = {"DFII10", "DGS2", "DGS10", "DFF", "T10YIE"}
 MACRO_KEYS = ("CPI_YOY", "CORE_CPI_YOY", "NFP_CHG", "PCEPI", "PCEPILFE", "ICSA")
+GOLD_TECH_SYMBOLS = {"GC=F", "XAUUSD", "XAUUSD=X", "OANDA:XAUUSD", "xau"}
+
+
+def prefer_fresh_gold_technical(rows: list[dict]) -> list[dict]:
+    """有 XAUS 日线时，隐藏同一黄金标的的旧 Yahoo 自动技术面。
+
+    人工导入来源始终保留，且只在 XAUS 报告确实存在时才过滤 Yahoo 自动报告。
+    """
+    has_xaus = any(
+        row.get("symbol") in GOLD_TECH_SYMBOLS
+        and str(row.get("source") or "").startswith("XAUS")
+        for row in rows
+    )
+    if not has_xaus:
+        return rows
+    return [
+        row for row in rows
+        if not (
+            row.get("symbol") in GOLD_TECH_SYMBOLS
+            and str(row.get("source") or "").startswith("Yahoo")
+        )
+    ]
 
 
 # ---- 采集 ----
@@ -227,7 +249,7 @@ def build_market(db: Database) -> tuple[dict, dict]:
         "documents": docs,
     }
     # 技术面 / GEX / CRT 只作为报告上下文展示，不参与宏观评分
-    market["technical"] = db.technical_reports(limit=12)
+    market["technical"] = prefer_fresh_gold_technical(db.technical_reports(limit=12))
     market["gex"] = db.gex_snapshots(limit=8)
     crt_rows = db.crt_snapshots(limit=8)
     # 旧版两根快照没有完整 candles，优先展示可用的三根结构（截图也依赖它）
