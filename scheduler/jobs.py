@@ -252,12 +252,12 @@ def build_market(db: Database) -> tuple[dict, dict]:
     market["technical"] = prefer_fresh_gold_technical(db.technical_reports(limit=12))
     market["gex"] = db.gex_snapshots(limit=8)
     crt_rows = db.crt_snapshots(limit=8)
-    # 旧版两根快照没有完整 candles，优先展示可用的三根结构（截图也依赖它）
-    three_candle = [
+    # 旧版三根快照没有完整 6 根结构，优先展示可用的六根（截图也依赖它）
+    six_candle = [
         row for row in crt_rows
-        if len((row.get("payload") or {}).get("candles") or []) >= 3
+        if len((row.get("payload") or {}).get("candles") or []) >= 6
     ]
-    market["crt"] = three_candle or crt_rows
+    market["crt"] = six_candle or crt_rows
     market["calendar"] = upcoming_events(hours=24)
     return market, inputs
 
@@ -349,34 +349,42 @@ def demo_market() -> tuple[dict, dict]:
             },
         ],
         "crt": [{
-            "source": "TradingView 公开行情（4H CRT）",
+            "source": "TradingView 公开行情（1H CRT）",
             "symbol": "XAUUSD", "as_of": f"{today}T10:00:00+00:00",
-            "timeframe": "4h", "current_close": 3605.80,
+            "timeframe": "1h", "current_close": 3605.80,
             "current_high": 3620.50, "current_low": 3580.20,
-            "range_high": 3610.00, "range_low": 3575.40,
-            "prev_high": 3610.00, "prev_low": 3575.40, "equilibrium": 3592.70,
-            "sweep_high": 3608.00, "sweep_low": 3568.00,
-            "dist_high_to_resistance": -10.50, "dist_low_to_support": 4.80,
-            "dist_sweep_low_to_support": -7.40, "dist_sweep_high_to_resistance": 2.00,
-            "sweep_side": "低", "swept_prev_high": False, "swept_prev_low": True,
-            "p2_high": 3608.00, "p2_low": 3568.00,
-            "p3_high": 3620.50, "p3_low": 3580.20, "p3_close": 3605.80,
-            "p3_sweep_side": "高", "p3_swept_p2_high": True, "p3_swept_p2_low": False,
-            "p3_reclaimed_p2_range": True, "p3_reclaim_text": "收盘收回 P2 区间",
-            "dist_p3_high_to_p2_high": 12.50, "dist_p3_low_to_p2_low": 12.20,
-            "scenario": "P3 扫 P2 高点后收回区间 · 偏空反转确认", "bias": "偏空",
-            "target": 3568.00, "stop_ref": 3620.50,
-            "summary": f"P1 背景区间 高 3610.00 / 低 3575.40；"
-                       f"P3 扫 P2 高点 3620.50，收盘 3605.80 已收回 P2 区间（3568.00~3608.00）；"
-                       f"情景 P3 扫 P2 高点后收回区间 · 偏空反转确认（偏空）。",
+            "range_high": 3610.00, "range_low": 3568.00,
+            "prev_high": 3610.00, "prev_low": 3568.00, "equilibrium": 3589.00,
+            "sweep_high": 3610.00, "sweep_low": 3568.00,
+            "dist_high_to_resistance": -10.50, "dist_low_to_support": 12.20,
+            "dist_sweep_low_to_support": 0.0, "dist_sweep_high_to_resistance": 0.0,
+            "sweep_side": "高", "swept_prev_high": True, "swept_prev_low": False,
+            "p6_high": 3620.50, "p6_low": 3580.20, "p6_close": 3605.80,
+            "p6_sweep_side": "高", "p6_swept_range_high": True,
+            "p6_swept_range_low": False, "p6_reclaimed_range": True,
+            "p6_reclaim_text": "收盘收回 P1-P5 区间",
+            "dist_p6_high_to_range_high": 10.50, "dist_p6_low_to_range_low": 12.20,
+            "crt_valid": True,
+            "scenario": "P6 扫 P1-P5 区间高点后收回 · CRT 成立 · 偏空反转确认",
+            "bias": "偏空", "target": 3568.00, "stop_ref": 3620.50,
+            "summary": f"P1-P5 区间 高 3610.00 / 低 3568.00；"
+                       f"P6 扫 P1-P5 区间高点（高 3620.50 / 低 3580.20），"
+                       f"收盘 3605.80 已收回区间（3568.00~3610.00）；"
+                       f"情景 P6 扫 P1-P5 区间高点后收回 · CRT 成立 · 偏空反转确认（偏空）。",
             "payload": {
                 "label": "现货黄金 XAUUSD", "as_of": f"{today}T10:00:00+00:00",
                 "candles": [
-                    {"time": f"{today}T02:00:00+00:00", "open": 3580.0,
+                    {"time": f"{today}T05:00:00+00:00", "open": 3580.0,
                      "high": 3610.0, "low": 3575.4, "close": 3590.0},
                     {"time": f"{today}T06:00:00+00:00", "open": 3590.0,
                      "high": 3608.0, "low": 3568.0, "close": 3595.0},
-                    {"time": f"{today}T10:00:00+00:00", "open": 3595.0,
+                    {"time": f"{today}T07:00:00+00:00", "open": 3595.0,
+                     "high": 3605.0, "low": 3572.0, "close": 3600.0},
+                    {"time": f"{today}T08:00:00+00:00", "open": 3600.0,
+                     "high": 3609.0, "low": 3580.0, "close": 3604.0},
+                    {"time": f"{today}T09:00:00+00:00", "open": 3604.0,
+                     "high": 3607.0, "low": 3578.0, "close": 3598.0},
+                    {"time": f"{today}T10:00:00+00:00", "open": 3598.0,
                      "high": 3620.5, "low": 3580.2, "close": 3605.8},
                 ],
             },
@@ -445,16 +453,16 @@ def run_once(db: Database | None = None, *, dry_run: bool = False, send: bool = 
 
             result["sent"] += send_alerts(alerts, db, _send_alert)
 
-            # 执行提醒后附 3 根 4H K 线截图；失败不影响文本报告与提醒
+            # 执行提醒后附 6 根 1H K 线截图；失败不影响文本报告与提醒
             try:
                 chart = build_crt_chart(market)
             except Exception as exc:  # noqa: BLE001
                 chart = None
-                print(f"[chart] 3 根 4H 截图生成失败: {exc}")
+                print(f"[chart] 6 根 1H 截图生成失败: {exc}")
             if chart:
                 photo_ok, photo_channel = notify_photo(
-                    chart, caption="3根4H K线（P1区间 / P2扫荡 / P3扩张）",
-                    title="4H CRT K线",
+                    chart, caption="6根1H K线（P1-P5区间 / P6扫荡与收回）",
+                    title="1H CRT K线",
                 )
                 if photo_ok:
                     result["sent"].append(f"crt_chart({photo_channel})")

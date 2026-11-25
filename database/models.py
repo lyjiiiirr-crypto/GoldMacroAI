@@ -430,7 +430,7 @@ class Database:
             result.append(item)
         return result
 
-    # ---- 4H CRT 快照（自动 / 人工共用，按来源+标的+时间幂等）----
+    # ---- 1H CRT 快照（自动 / 人工共用，按来源+标的+时间幂等）----
     def upsert_crt_snapshot(
         self, source: str, symbol: str, as_of: str, timeframe: str,
         current_high: float | None, current_low: float | None,

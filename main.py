@@ -151,7 +151,7 @@ def parse_args() -> argparse.Namespace:
     action.add_argument("--import-gex", action="store_true",
                         help="录入 GEX/Gamma flip 快照（支持 --gex-json 文件或 JSON 字符串）")
     action.add_argument("--import-crt", action="store_true",
-                        help="录入 4H CRT 高低点快照（支持 --crt-json 文件或 JSON 字符串）")
+                        help="录入 1H CRT 六根 K 线快照（支持 --crt-json 文件或 JSON 字符串）")
     action.add_argument("--import-polymarket", action="store_true",
                         help="录入 Polymarket 利率预测（支持 --polymarket-json 文件或 JSON 字符串）")
     action.add_argument("--setup-ntfy", action="store_true", help="生成免注册 ntfy.sh 推送主题并写入 .env")
@@ -185,7 +185,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gex-json", default="",
                         help="GEX 快照 JSON 字符串或 .json 文件路径（快照结构或 Yahoo 期权链响应）")
     parser.add_argument("--crt-json", default="",
-                        help="CRT 快照 JSON 字符串或 .json 文件路径（三根 K 线 / Yahoo chart / 1H K 线）")
+                        help="CRT 快照 JSON 字符串或 .json 文件路径（6 根 K 线 / Yahoo chart / 旧版兼容）")
     parser.add_argument("--polymarket-json", default="",
                         help="Polymarket 利率预测 JSON 字符串或 .json 文件路径（Gamma 响应 / 市场列表 / 快照）")
     parser.add_argument("--rate", type=float, default=0.0,

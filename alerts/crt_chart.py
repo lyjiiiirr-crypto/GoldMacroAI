@@ -1,4 +1,4 @@
-"""本地生成「3 根 4H K 线」截图（纯标准库 PNG，无第三方依赖）。
+"""本地生成「6 根 1H K 线」截图（纯标准库 PNG，无第三方依赖）。
 
 用于交易执行提醒后的 Telegram sendPhoto；生成失败时调用方优雅降级，
 不影响文本日报推送。图片仅为价格结构示意，非交易信号。
@@ -142,10 +142,10 @@ def _beijing_hhmm(value) -> str:
 
 
 def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
-                   target=None, stop=None) -> bytes:
-    """把 3 根 4H K 线渲染为 PNG；levels 为 P2 当前区间与结构参考位。"""
+                   target=None, stop=None, crt_valid=None) -> bytes:
+    """把 6 根 1H K 线渲染为 PNG；区间为 P1~P5 高低点，P6 为扫荡根。"""
     parsed = []
-    for item in candles[:3]:
+    for item in candles[:6]:
         open_, high, low, close = (
             _number(item.get("open")), _number(item.get("high")),
             _number(item.get("low")), _number(item.get("close")),
@@ -157,8 +157,8 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
             "low": min(low, open_, close), "close": close,
             "time": _beijing_hhmm(item.get("time") or item.get("as_of")),
         })
-    if len(parsed) != 3:
-        raise ValueError("需要 exactly 3 根 K 线")
+    if len(parsed) != 6:
+        raise ValueError("需要 exactly 6 根 K 线")
     levels = [v for v in (range_high, range_low, target, stop) if _number(v) is not None]
     prices = ([c["high"] for c in parsed] + [c["low"] for c in parsed]
               + [_number(v) for v in levels])
@@ -167,7 +167,7 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
     low_price -= padding
     high_price += padding
 
-    width, height = 760, 440
+    width, height = 900, 440
     left, right, top, bottom = 66, 72, 66, 96
     plot_width, plot_height = width - left - right, height - top - bottom
     canvas = Canvas(width, height)
@@ -182,7 +182,7 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
         canvas.hline(left, width - right, y, GRID)
         canvas.text(6, y - 4, f"{price:.2f}", MUTED)
 
-    # P2 当前区间：阻力（高）与支撑（低）
+    # P1~P5 区间：上沿阻力与下沿支撑
     if _number(range_high) is not None:
         y = y_pos(range_high)
         canvas.dash_hline(left, width - right, y, RESIST)
@@ -200,9 +200,9 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
         canvas.dash_hline(left, width - right, y, STOP, dash=5, gap=9)
         canvas.text(width - right + 8, y - 4, "SL", STOP)
 
-    # 三根 K 线
-    slot = plot_width / 3.0
-    body_width = 46
+    # 6 根 K 线；第 6 根为扫荡/收回根
+    slot = plot_width / 6.0
+    body_width = 28
     for index, candle in enumerate(parsed):
         center = int(left + slot * (index + 0.5))
         color = UP if candle["close"] >= candle["open"] else DOWN
@@ -212,12 +212,21 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
             min(candle["open"], candle["close"]))
         canvas.rect(center - body_width // 2, top_y,
                     center + body_width // 2, max(bottom_y, top_y + 3), color)
-        canvas.text(center - 10, top + plot_height + 10, f"P{index + 1}", TEXT)
+        canvas.text(center - 10, top + plot_height + 10, f"P{index + 1}",
+                    TARGET if index == 5 else TEXT)
         if candle["time"]:
             canvas.text(center - 14, top + plot_height + 26, candle["time"], MUTED)
 
-    canvas.text(12, 12, "XAUUSD 4H CRT  P2 RANGE / P3 SWEEP + RECLAIM", TEXT)
-    canvas.text(12, 30, "BJ CLOSE TIME  R=P2 HIGH S=P2 LOW T=TARGET SL=INVALIDATION", MUTED)
+    canvas.text(12, 12, "XAUUSD 1H CRT  P1-P5 RANGE / P6 SWEEP + RECLAIM", TEXT)
+    canvas.text(
+        12, 30,
+        "BJ CLOSE TIME  R=P1-P5 HIGH S=P1-P5 LOW T=TARGET SL=INVALIDATION",
+        MUTED,
+    )
+    if crt_valid is not None:
+        canvas.text(width - right - 78, 12,
+                    "CRT OK" if crt_valid else "CRT NO",
+                    TARGET if crt_valid else STOP)
     footer = []
     if _number(target) is not None:
         footer.append(f"TARGET {float(target):.2f}")
@@ -238,12 +247,13 @@ def build_crt_chart(market: dict | None) -> bytes | None:
             return value if value is not None else data.get(key, default)
 
         candles = pick("candles") or []
-        if len(candles) < 3:
-            continue  # 旧版快照不足 3 根，继续找下一条
+        if len(candles) < 6:
+            continue  # 旧版快照不足 6 根，继续找下一条
         return render_crt_png(
-            candles[-3:],
-            range_high=pick("p2_high", pick("sweep_high")),
-            range_low=pick("p2_low", pick("sweep_low")),
+            candles[-6:],
+            range_high=pick("range_high", pick("prev_high")),
+            range_low=pick("range_low", pick("prev_low")),
             target=pick("target"), stop=pick("stop_ref"),
+            crt_valid=pick("crt_valid"),
         )
     return None

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 # GitHub 原生 schedule 在本仓库不产生任何 run（已验证 0 次），
-# 改由 gold-macro-keeper.yml 在云端每 4 小时触发本工作流。
+# 改由 gold-macro-keeper.yml 在云端每小时（UTC hh:06）触发本工作流。
 # 同一时段只允许一个日报任务，避免重复推送。
 concurrency:
   group: gold-macro-report

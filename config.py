@@ -147,7 +147,7 @@ TECHNICAL_SYMBOLS = tuple(
     s.strip() for s in env("TECHNICAL_SYMBOLS", "GC=F").split(",") if s.strip()
 )
 # XAUS 免费公开实时行情（免密钥、GET、带 data_state 新鲜度校验）
-# chart 提供 60m 已收盘 OHLC（4H 结构高低点），spot 提供临近收线的实时价（P3 收盘）
+# chart 提供 60m 原生已收盘 OHLC（1H CRT 的 P1~P6），spot 仅作其他模块参考
 # history 提供已定稿日线；intraday 5 分钟采样保留为备用参考
 XAUS_INTRADAY_URL = env(
     "XAUS_INTRADAY_URL",
@@ -165,7 +165,7 @@ XAUS_SPOT_URL = env(
     "XAUS_SPOT_URL",
     "https://xaus.com/api/v1/spot?compact=1",
 )
-# 4H CRT（蜡烛区间理论）：优先 XAUS 60m P1/P2 结构 + TradingView 已收盘 P3，失败回退 Yahoo
+# 1H CRT（蜡烛区间理论）：优先 XAUS 60m 已收盘 P1~P6 + TradingView 已收盘 P6，失败回退 Yahoo
 TV_CRT_URL = env(
     "TV_CRT_URL",
     "https://scanner.tradingview.com/global/scan",

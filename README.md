@@ -16,9 +16,9 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 
 - 仓库：<https://github.com/lyjiiiirr-crypto/GoldMacroAI>（Public）
 - **重要**：GitHub 原生 `schedule` 事件在本仓库实测完全不触发（主工作流与全新探针工作流均为 0 次 schedule run，GitHub 状态页正常），因此不再依赖原生 cron。
-- `.github/workflows/gold-macro-keeper.yml`：云端调度链。每次运行计算下一个 UTC 02:06 / 06:06 / 10:06 / 14:06 / 18:06 / 22:06（北京时间 10:06 / 14:06 / 18:06 / 22:06 / 02:06 / 06:06），等待到点后触发日报工作流，再用内置 `GITHUB_TOKEN` 触发下一次 keeper，形成闭环。全程在 GitHub Actions 云端完成，**不依赖本地电脑**。
+- `.github/workflows/gold-macro-keeper.yml`：云端调度链。每次运行计算下一个 UTC 整点后 6 分钟（hh:06，北京时间同为整点后 6 分钟），等待到点后触发日报工作流，再用内置 `GITHUB_TOKEN` 触发下一次 keeper，形成闭环。**每小时推送一次**Telegram 日报与 CRT 截图。全程在 GitHub Actions 云端完成，**不依赖本地电脑**。
 - `.github/workflows/gold-macro.yml`：只保留 `workflow_dispatch`，由 keeper 触发；也可在 Actions 页面点 **Run workflow** 手动触发。带 `concurrency: gold-macro-report`，防止同一时段重复推送。
-- 首次启用：在 Actions 手动运行一次 `GoldMacroAI cloud keeper`（无需输入参数），之后自动每 4 小时续链。若链因 GitHub API 故障中断，再次手动运行该工作流即可恢复。
+- 首次启用：在 Actions 手动运行一次 `GoldMacroAI cloud keeper`（无需输入参数），之后自动每小时续链。若链因 GitHub API 故障中断，再次手动运行该工作流即可恢复。
 - 所需 Secrets（Settings → Secrets and variables → Actions）：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`NTFY_TOPIC`。密钥只存在 GitHub Secrets，不进代码库；keeper 只使用内置 `GITHUB_TOKEN`，无需新建 secret。
 - 每次运行后历史数据库 `database/gold_macro.db` 会自动提交回仓库（`.gitignore` 默认忽略，工作流中强制添加）。
 - 修改代码后直接 `git push` 即可，GitHub Actions 会自动使用仓库里的 Secrets；keeper 每次都按 `main` 分支最新代码触发。
@@ -63,7 +63,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 技术面报告（本地自算） | 黄金优先用 XAUS 免费公开实时行情的已定稿日线（免密钥、带 `data_state` 新鲜度校验），失败回退 Yahoo Finance `GC=F`；自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
 | GEX 地图 / Gamma 翻转点 | Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），用 IV + 未平仓量按 Black-Scholes 本地估算 GEX、gamma flip 与对冲压力方向；延迟/近似值，**非交易信号、不参与宏观评分**，可人工导入 |
 | 技术面 × GEX 融合方向 | 技术面（SMA/RSI/MACD）定基础方向，GEX 通过现价与 gamma flip 的相对位置给出偏向并放大/削弱，输出**偏多 / 偏空 / 中性震荡**；写入日报、`/fusion` 可查，未回测、**不参与宏观评分** |
-| 4H CRT 三根结构 | 已收盘 4H K 线优先用 XAUS 免费公开实时行情的 60m OHLC 本地聚合（带 `data_state` 新鲜度校验，每根 4H 必须含满 4 根 1H）确定 P1/P2 结构；最新 P3 优先用 TradingView scanner 的已收盘 `[1]` 列覆盖，其次用 XAUS 实时现货价覆盖收盘，失败再回退 Yahoo 1H 聚合；报告发出时 P3 已收线，当前信号由 **P3 是否扫过 P2 高低点、P3 收盘是否收回 P2 区间** 判定，P1 仅作历史背景。写入「交易执行提醒」并附 3 根 K 线图，`/crt` 可查，未回测、**非交易信号** |
+| 1H CRT 六根结构 | 已收盘 1H K 线优先用 XAUS 免费公开实时行情的 60m 原生 OHLC（带 `data_state` 新鲜度校验）；最新一根 P6 优先用 TradingView scanner 的已收盘 `[1]` 列覆盖（时间戳对齐），不再用实时现货覆盖收盘，失败再回退 Yahoo 1H；**P1~P5 取最高/最低价为区间，P6 扫过区间边界且收盘收回区间则 CRT 成立**。写入「交易执行提醒」并附 6 根 K 线图，`/crt` 可查，未回测、**非交易信号** |
 | Polymarket 利率预测 | 公开 Gamma API 读取利率市场当前 Yes 赔率，展示在「美联储政策预期」；**预测市场定价，非官方利率数据、不参与宏观评分**，可人工导入 |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
@@ -71,7 +71,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
 | 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/fusion` `/crt` `/bias` `/report` `/help` |
-| 定时任务 | GitHub 云端 keeper 链每 4 小时触发，在 TradingView 4H 收线后约 6 分钟（北京 10:06/14:06/18:06/22:06/02:06/06:06）采集，历史数据库自动保存回仓库；不依赖本地电脑 |
+| 定时任务 | GitHub 云端 keeper 链每小时触发，在 1H 收线后约 6 分钟（每小时 UTC hh:06 / 北京整点后 6 分钟）采集并推送 Telegram，历史数据库自动保存回仓库；不依赖本地电脑 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
 **V1.0 仍不做/限制**：CME 官方 FedWatch API（收费，本项目使用社区公开归档，非官方承诺）、Trading Central 授权研报（商业/B2B 产品，无可验证免费公开源，本项目改用公开行情本地自算并明确标注非官方研报）、市场一致预期（BLS/BEA 不发布，故不伪造"意外值"，仍可人工导入）、秒级行情监控、交易结构识别（V2.0）。
@@ -89,7 +89,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
 | 黄金技术面 | XAUS 免费公开实时行情历史日线（`XAUS_HISTORY_URL`），失败回退 Yahoo Finance `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | 只取已定稿日线，盘中未收盘根会被丢弃；SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
 | GEX / Gamma flip | [Cboe 免费延迟期权报价](https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json) `GLD`、`SPY`（`GEX_SYMBOLS` 可配置） | 免费公开接口，约 15 分钟延迟，单次请求返回整条链（含未平仓量 / IV / gamma）。Yahoo 免费链现网未平仓量常为 0，故改用 Cboe；本项目用 IV 本地按 Black-Scholes 估算（IV 缺失时回退 Cboe gamma）。GEX = Γ×OI×100×S²×0.01（看涨为正、看跌为负），flip 由整条链重定价找净 GEX 过零点。**数据延迟、未含真实做市商库存，仅作研究背景，非交易信号** |
-| 4H CRT 三根结构 | XAUS 60m 已收盘 OHLC（`XAUS_CHART_URL`）聚合 P1/P2 结构；TradingView scanner（`TV_CRT_SYMBOL` / `TV_CRT_URL`）的 `[1]` 已收盘列覆盖 P3，缺失时用 XAUS 现货（`XAUS_SPOT_URL`）覆盖 P3 收盘；Yahoo 1H（`YHOO_CRT_URL`）为辅 | 只接受 `data_state.status=fresh` 且 `data_state.as_of` 在允许时差内的数据；`chart` 的 upstream 收盘可能与现货偏差较大，所以只取已收盘 60m 的高低点。免费 scanner 常只返回 `[1]`（最近一根已收盘），时间戳对齐后用它覆盖 P3 的 OHLC，避免把当前未完成根当成收盘。每根 4H 必须含满 4 根已收盘 1H。按 UTC 02/06/10/14/18/22 收线（北京 10/14/18/22/02/06）；采集时点在收线后约 6 分钟；P1 仅作背景，按 P2 当前区间 + P3 扫荡/收盘收回判定；结构参考位由 P2/P3 边界给出。**近似值，未回测，非交易信号** |
+| 1H CRT 六根结构 | XAUS 60m 原生已收盘 OHLC（`XAUS_CHART_URL`）提供 P1~P6；TradingView scanner（`TV_CRT_SYMBOL` / `TV_CRT_URL`）的 `[1]` 已收盘列覆盖 P6；Yahoo 1H（`YHOO_CRT_URL`）为辅 | 只接受 `data_state.status=fresh` 且 `data_state.as_of` 在允许时差内的数据；60m 就是目标时间框架，无需 4H 聚合。免费 scanner 常只返回 `[1]`（最近一根已收盘），时间戳严格对齐后用它覆盖 P6 的 OHLC，避免把当前未完成根当成收盘；不再用实时现货覆盖收盘，六根均为完整 K 线。按 UTC 整点收线（北京整点）；采集时点在收线后约 6 分钟；P1~P5 的最高/最低价为区间，P6 扫过区间边界并收盘收回才算 CRT 成立；结构参考位由区间/P6 边界给出。**近似值，未回测，非交易信号** |
 | Polymarket 利率预测 | [Polymarket Gamma API](https://gamma-api.polymarket.com)（`POLYMARKET_GAMMA_URL` 可配置） | 免费公开市场元数据与 Yes 赔率，无密钥；失败时优雅降级，可用 `--import-polymarket` 人工导入。仅作报告上下文，不参与评分 |
 
 ## 目录结构
@@ -190,12 +190,15 @@ python main.py --import-gex --date 2026-11-23 --gex-json gex_snapshot.json
 # 原始期权链响应（Cboe data.options 或 Yahoo optionChain.result[0]）→ 本地计算 GEX / flip
 python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rate 0.04
 
-# 4H CRT 三根结构：可传三根 K 线、区间/扫荡/扩张高低点，也可传 XAUS chart / Yahoo chart 响应 / 1H K 线（自动采集优先 XAUS 60m 结构 + TradingView 已收盘 P3）
+# 1H CRT 六根结构：可传 6 根 K 线、candles 列表、区间高低点，也可传 XAUS chart / Yahoo chart 响应（自动采集优先 XAUS 60m + TradingView 已收盘 P6）
 python main.py --import-crt --date 2026-11-23 --crt-json crt_snapshot.json
-# crt_snapshot.json 示例（三根 K 线）：
-# {"candle1":{"high":3629.6,"low":3567.8,"open":3580,"close":3610},
-#  "candle2":{"high":3636.4,"low":3560.2,"open":3610,"close":3615},
-#  "candle3":{"high":3640.1,"low":3590.0,"open":3615,"close":3630}}
+# crt_snapshot.json 示例（6 根 K 线，P1~P5 为区间、P6 为扫荡根）：
+# {"candle1":{"high":3610.0,"low":3575.4,"open":3580,"close":3590},
+#  "candle2":{"high":3608.0,"low":3568.0,"open":3590,"close":3595},
+#  "candle3":{"high":3605.0,"low":3572.0,"open":3595,"close":3600},
+#  "candle4":{"high":3609.0,"low":3580.0,"open":3600,"close":3604},
+#  "candle5":{"high":3607.0,"low":3578.0,"open":3604,"close":3598},
+#  "candle6":{"high":3620.5,"low":3580.2,"open":3598,"close":3605.8}}
 
 # Polymarket 利率预测：Gamma 原始响应 / 市场列表 / 已构造快照均可
 python main.py --import-polymarket --polymarket-json polymarket.json
@@ -213,16 +216,16 @@ GEX 报告中会明确标注「Cboe 免费延迟期权报价 + 本地 Black-Scho
 - **合成**：`0.65 × 技术方向 + 0.35 × GEX 方向`，乘调节系数后，≥ +0.2 判偏多、≤ -0.2 判偏空，其余为中性震荡。
 - 该结果**只写入报告**，不进入 100 分宏观评分，也不触发交易提醒；输出固定带「延迟近似、未回测、不参与宏观评分、非交易信号」标注。
 
-#### 交易执行提醒（4H CRT 三根结构 → 4H/15M 执行）
+#### 交易执行提醒（1H CRT 六根结构 → 1H/15M 执行）
 
-报告结尾的执行提醒基于 4H 三根 CRT 快照生成（`/crt` 可单独查询），并在 Telegram 文本后附一张 3 根 4H K 线图：
+报告结尾的执行提醒基于 1H 六根 CRT 快照生成（`/crt` 可单独查询），并在 Telegram 文本后附一张 6 根 1H K 线图：
 
-- **P1 仅作背景**：报告发出时 P3 已收线，第 1 根区间不再作为当前阻力/支撑或目标。
-- **P2 是当前区间**：第 2 根扫荡后形成的高/低点为当前参考边界。
-- **P3 扫荡与收回**：先标注 P3 高点距 P2 高点、P3 低点距 P2 低点的点数（正数仍在区间内，负数表示已扫过），再标注 P3 收盘是否收回 P2 区间；**不标注距现价**。
-- **方向判定**：扫 P2 低点后收回 → 偏多反转；扫 P2 高点后收回 → 偏空反转；扫低未收回 → 偏空延续；扫高未收回 → 偏多延续；同时扫高低或两侧都未扫 → 中性待确认。
-- **执行参考**：反转情形目标看 P2 另一侧、失效参考为 P3 扫荡影线；延续情形只给 P2 边界作为失效参考；均为结构位而非挂单建议。
-- **融合方向**：与 4H 情景冲突时降级观望；LTF 用 4H/15M 依据 P3 扫荡与收盘收回结果，等回测确认再入场，不追价。
+- **P1~P5 为区间**：取这五根已收盘 K 线的最高价 / 最低价作为当前区间边界（阻力 / 支撑）。
+- **P6 扫荡与收回**：先标注 P6 高点距区间上沿、P6 低点距区间下沿的点数（正数仍在区间内，负数表示已扫过），再标注 P6 收盘是否回到区间内；**不标注距现价**。
+- **CRT 成立判定**：P6 扫过区间高点或低点，且收盘收回区间 → CRT 成立；未扫过或未收回 → 未成立。
+- **方向判定**：扫区间低点后收回 → 偏多反转；扫区间高点后收回 → 偏空反转；扫低未收回 → 偏空延续；扫高未收回 → 偏多延续；同时扫高低或两侧都未扫 → 中性待确认。
+- **执行参考**：反转情形目标看区间另一侧、失效参考为 P6 扫荡影线；延续情形只给区间边界作为失效参考；均为结构位而非挂单建议。
+- **融合方向**：与 1H 情景冲突时降级观望；LTF 用 1H/15M 依据 P6 扫荡与收盘收回结果，等回测确认再入场，不追价。
 - **截图**：本地纯标准库生成 PNG，通过 `sendPhoto` 推送；生成/推送失败时不影响文本日报。
 - 规则未回测，仅为流程清单，**非交易信号、不构成投资建议**。
 
@@ -250,7 +253,7 @@ OLLAMA_MODEL=qwen2.5:3b
 python main.py --listen
 ```
 
-在 Telegram 中发送 `/help` 查看命令；`/fusion` 查看融合方向，`/crt` 查看 4H CRT 三根结构与关键位。
+在 Telegram 中发送 `/help` 查看命令；`/fusion` 查看融合方向，`/crt` 查看 1H CRT 六根结构与区间边界。
 
 ## 二、部署到 GitHub 免费云端
 
@@ -262,7 +265,7 @@ python main.py --listen
    - `TELEGRAM_CHAT_ID`
    - （可选）`CLOUD_AI_BASE_URL` / `CLOUD_AI_API_KEY` / `CLOUD_AI_MODEL`
 4. 进入 `Actions`，手动运行 `GoldMacroAI scheduled run` 验证日报与 Telegram 推送。
-5. 再手动运行一次 `GoldMacroAI cloud keeper` 启动调度链；之后每 4 小时自动触发（北京时间 10:06/14:06/18:06/22:06/02:06/06:06），数据库提交回仓库。
+5. 再手动运行一次 `GoldMacroAI cloud keeper` 启动调度链；之后每小时自动触发（UTC hh:06 / 北京整点后 6 分钟），数据库提交回仓库。
 
 **云端注意**：GitHub 原生 `schedule` 在本仓库不可用，调度完全依赖 keeper 链（见上）。本地 Ollama 地址 `localhost:11434` 云端访问不到，云端默认使用规则分析。公开仓库的 GitHub Actions 分钟免费；若改为私有仓库需自行确认免费额度。
 

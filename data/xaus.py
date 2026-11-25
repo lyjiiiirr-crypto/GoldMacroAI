@@ -4,9 +4,9 @@ XAUS 提供免密钥 GET 接口，所有响应都带 ``data_state``
 （status / as_of / source / age_seconds）。本模块只接受 ``status=fresh``
 且 ``data_state.as_of`` 在允许时差内的真实数据；不补全、不外推、不伪造价格。
 
-实测 ``/chart`` 的 upstream 收盘价可能与 ``/spot`` 相差数十美元，因此 4H CRT
-只用 ``/chart`` 的已收盘 60m 高低点确定 P1/P2 结构；P3 优先用 TradingView
-scanner 已收盘列，缺失时才用 ``/spot`` 实时价覆盖收盘。
+实测 ``/chart`` 的 upstream 收盘价可能与 ``/spot`` 相差数十美元，因此 1H CRT
+只用 ``/chart`` 的已收盘 60m OHLC 作为 P1~P6，不再用 ``/spot`` 实时价覆盖
+收盘，确保六根都是完整 K 线；P6 优先用 TradingView scanner 已收盘列覆盖。
 ``/intraday`` 5 分钟采样保留为备用参考。
 
 注意：``data_state`` 描述的是响应"生成时"的新鲜度，经过 CDN/代理缓存时
