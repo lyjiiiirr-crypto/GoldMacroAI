@@ -354,23 +354,28 @@ def demo_market() -> tuple[dict, dict]:
             "timeframe": "1h", "current_close": 3605.80,
             "current_high": 3620.50, "current_low": 3580.20,
             "range_high": 3610.00, "range_low": 3568.00,
-            "prev_high": 3610.00, "prev_low": 3568.00, "equilibrium": 3589.00,
-            "sweep_high": 3610.00, "sweep_low": 3568.00,
-            "dist_high_to_resistance": -10.50, "dist_low_to_support": 12.20,
-            "dist_sweep_low_to_support": 0.0, "dist_sweep_high_to_resistance": 0.0,
+            "prev_high": 3607.00, "prev_low": 3578.00, "equilibrium": 3592.50,
+            "sweep_high": 3607.00, "sweep_low": 3578.00,
+            "dist_high_to_resistance": -13.50, "dist_low_to_support": 2.20,
             "sweep_side": "高", "swept_prev_high": True, "swept_prev_low": False,
             "p6_high": 3620.50, "p6_low": 3580.20, "p6_close": 3605.80,
+            "signal_index": 5, "signal_label": "P5",
+            "signal_open": 3604.00, "signal_high": 3607.00,
+            "signal_low": 3578.00, "signal_close": 3598.00,
+            "swept_high": True, "swept_low": False, "swept_side": "高",
+            "reclaimed_wick": True, "reclaim_text": "收盘收回 P5 影线内（3578.00~3607.00）",
             "p6_sweep_side": "高", "p6_swept_range_high": True,
             "p6_swept_range_low": False, "p6_reclaimed_range": True,
-            "p6_reclaim_text": "收盘收回 P1-P5 区间",
-            "dist_p6_high_to_range_high": 10.50, "dist_p6_low_to_range_low": 12.20,
-            "crt_valid": True,
-            "scenario": "P6 扫 P1-P5 区间高点后收回 · CRT 成立 · 偏空反转确认",
-            "bias": "偏空", "target": 3568.00, "stop_ref": 3620.50,
-            "summary": f"P1-P5 区间 高 3610.00 / 低 3568.00；"
-                       f"P6 扫 P1-P5 区间高点（高 3620.50 / 低 3580.20），"
-                       f"收盘 3605.80 已收回区间（3568.00~3610.00）；"
-                       f"情景 P6 扫 P1-P5 区间高点后收回 · CRT 成立 · 偏空反转确认（偏空）。",
+            "dist_p6_high_to_signal_high": 13.50, "dist_p6_low_to_signal_low": 2.20,
+            "dist_p6_high_to_range_high": 13.50, "dist_p6_low_to_range_low": 2.20,
+            "crt_valid": True, "rule_version": 2,
+            "scenario": "P6 扫 P5 高点后收回该根影线内 · CRT 成立 · 偏空反转确认",
+            "bias": "偏空", "target": 3578.00, "stop_ref": 3620.50,
+            "summary": f"P1-P5 背景区间 高 3610.00 / 低 3568.00；"
+                       f"信号根 P5 高 3607.00 / 低 3578.00；"
+                       f"P6 扫 P5 高点（高 3620.50 / 低 3580.20 / 收 3605.80），"
+                       f"收盘收回 P5 影线内（3578.00~3607.00）；"
+                       f"情景 P6 扫 P5 高点后收回该根影线内 · CRT 成立 · 偏空反转确认（偏空）。",
             "payload": {
                 "label": "现货黄金 XAUUSD", "as_of": f"{today}T10:00:00+00:00",
                 "candles": [

@@ -142,8 +142,9 @@ def _beijing_hhmm(value) -> str:
 
 
 def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
-                   target=None, stop=None, crt_valid=None) -> bytes:
-    """把 6 根 1H K 线渲染为 PNG；区间为 P1~P5 高低点，P6 为扫荡根。"""
+                   target=None, stop=None, crt_valid=None,
+                   signal_high=None, signal_low=None, signal_index=None) -> bytes:
+    """把 6 根 1H K 线渲染为 PNG；R/S 为被扫信号根边界，P6 为扫荡根。"""
     parsed = []
     for item in candles[:6]:
         open_, high, low, close = (
@@ -159,7 +160,10 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
         })
     if len(parsed) != 6:
         raise ValueError("需要 exactly 6 根 K 线")
-    levels = [v for v in (range_high, range_low, target, stop) if _number(v) is not None]
+    # R/S 取信号根边界；旧快照无信号根时回退 P1-P5 聚合区间
+    ref_high = signal_high if _number(signal_high) is not None else range_high
+    ref_low = signal_low if _number(signal_low) is not None else range_low
+    levels = [v for v in (ref_high, ref_low, target, stop) if _number(v) is not None]
     prices = ([c["high"] for c in parsed] + [c["low"] for c in parsed]
               + [_number(v) for v in levels])
     low_price, high_price = min(prices), max(prices)
@@ -182,13 +186,13 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
         canvas.hline(left, width - right, y, GRID)
         canvas.text(6, y - 4, f"{price:.2f}", MUTED)
 
-    # P1~P5 区间：上沿阻力与下沿支撑
-    if _number(range_high) is not None:
-        y = y_pos(range_high)
+    # 信号根（P1~P5 中被扫且最靠近 P6 的一根）的上沿阻力与下沿支撑
+    if _number(ref_high) is not None:
+        y = y_pos(ref_high)
         canvas.dash_hline(left, width - right, y, RESIST)
         canvas.text(width - right + 8, y - 4, "R", RESIST)
-    if _number(range_low) is not None:
-        y = y_pos(range_low)
+    if _number(ref_low) is not None:
+        y = y_pos(ref_low)
         canvas.dash_hline(left, width - right, y, SUPPORT)
         canvas.text(width - right + 8, y - 4, "S", SUPPORT)
     if _number(target) is not None:
@@ -212,15 +216,17 @@ def render_crt_png(candles: list[dict], *, range_high=None, range_low=None,
             min(candle["open"], candle["close"]))
         canvas.rect(center - body_width // 2, top_y,
                     center + body_width // 2, max(bottom_y, top_y + 3), color)
-        canvas.text(center - 10, top + plot_height + 10, f"P{index + 1}",
-                    TARGET if index == 5 else TEXT)
+        is_signal = signal_index is not None and int(signal_index) == index + 1
+        label = f"P{index + 1}" + ("*" if is_signal else "")
+        canvas.text(center - 10, top + plot_height + 10, label,
+                    TARGET if (is_signal or index == 5) else TEXT)
         if candle["time"]:
             canvas.text(center - 14, top + plot_height + 26, candle["time"], MUTED)
 
-    canvas.text(12, 12, "XAUUSD 1H CRT  P1-P5 RANGE / P6 SWEEP + RECLAIM", TEXT)
+    canvas.text(12, 12, "XAUUSD 1H CRT  ANY P1-P5 SWEPT / P6 RECLAIM WICK", TEXT)
     canvas.text(
         12, 30,
-        "BJ CLOSE TIME  R=P1-P5 HIGH S=P1-P5 LOW T=TARGET SL=INVALIDATION",
+        "BJ CLOSE TIME  *=SIGNAL BAR R=SIGNAL HIGH S=SIGNAL LOW T=TARGET SL=INVALIDATION",
         MUTED,
     )
     if crt_valid is not None:
@@ -255,5 +261,8 @@ def build_crt_chart(market: dict | None) -> bytes | None:
             range_low=pick("range_low", pick("prev_low")),
             target=pick("target"), stop=pick("stop_ref"),
             crt_valid=pick("crt_valid"),
+            signal_high=pick("signal_high"),
+            signal_low=pick("signal_low"),
+            signal_index=pick("signal_index"),
         )
     return None

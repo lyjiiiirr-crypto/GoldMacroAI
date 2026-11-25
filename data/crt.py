@@ -1,10 +1,12 @@
 """1H CRT（Candle Range Theory）六根 K 线模型。
 
 六根结构（P1~P6，全部为已收盘 1H K 线）：
-  P1~P5：区间，取这 5 根的最高价 / 最低价作为区间边界；
-  P6：若最高价扫过区间上沿、或最低价扫过区间下沿，且收盘价回到区间内，
-     则 CRT 成立。扫下沿后收回 → 偏多反转；扫上沿后收回 → 偏空反转；
-     未收回 → 延续；两侧都扫 → 中性待确认。
+  对 P1~P5 中的任意一根 Ci：若 P6 最高价 > Ci 高点，或 P6 最低价 < Ci 低点，
+  且 P6 收盘价回到 Ci 的 [低点, 高点] 内（即收回该根影线内），则 CRT 成立。
+  扫该根低点后收回 → 偏多反转；扫高点后收回 → 偏空反转；
+  扫后未收回 → 延续；同一根两侧都扫 → 中性待确认。
+  多根同时满足时取最靠近 P6 的那根（P5 优先）作为主信号根。
+P1~P5 的最高/最低价仅作背景区间，不再作为扫荡触发边界。
 只描述已收线结构，不预测下一根；未回测，非交易信号。
 
 数据源（免费公开、无密钥）：
@@ -41,10 +43,11 @@ BUCKET_SECONDS = 3600
 CANDLE_COUNT = 6
 RANGE_CANDLE_COUNT = 5
 DISCLAIMER = (
-    "1H CRT 的 P1~P5 区间优先取自 XAUS 免费公开实时行情（60m 已收盘 K 线），"
+    "1H CRT 的 P1~P5 优先取自 XAUS 免费公开实时行情（60m 已收盘 K 线），"
     "最新一根 P6 优先用 TradingView scanner 的已收盘列覆盖；"
-    "失败时回退 TradingView / Yahoo Finance。区间取 P1~P5 的最高/最低价，"
-    "P6 扫过区间边界并收盘收回才算 CRT 成立；为价格结构研究与流程提醒，"
+    "失败时回退 TradingView / Yahoo Finance。逐根判定：P6 扫过 P1~P5 中任意一根"
+    "K 线的高点或低点，且收盘回到该根 [低点, 高点] 内才算 CRT 成立；"
+    "多根满足时取最靠近 P6 的那根（P5 优先）。为价格结构研究与流程提醒，"
     "未回测，不构成交易信号。"
 )
 
@@ -320,85 +323,142 @@ def _history_from_db(db, symbol: str, limit: int = CANDLE_COUNT) -> list[dict]:
     return candles[-limit:]
 
 
-def p6_vs_range(candles: list[dict]) -> dict:
-    """P1~P5 定区间，判断 P6 是否扫过边界并收盘收回。
+def p6_vs_candles(candles: list[dict]) -> dict:
+    """逐根判定 P6 是否扫过 P1~P5 中任意一根并收回该根影线内。
 
-    P1~P5 的区间边界取这 5 根 K 线的最高价 / 最低价；P6 扫过上沿等价于扫过
-    P1~P5 中那根最高价 K 线，扫过下沿等价于扫过最低价那根 K 线。
+    - 扫过：P6 高点 > Ci 高点，或 P6 低点 < Ci 低点（严格越过）。
+    - 收回：P6 收盘价落在 Ci 的 [低点, 高点] 内。
+    - 主信号根：从 P5 往 P1 找，取最靠近 P6 的满足根；先找「扫过且收回」，
+      都未收回时才退而取最近「扫过但未收回」的根用于延续情景。
+    - P1~P5 的最高/最低价只作背景区间，不是触发边界。
+    距离口径：dist_p6_high_to_signal_high = P6高 - 信号根高（正数=已扫该根高点）；
+    dist_p6_low_to_signal_low = P6低 - 信号根低（负数=已扫该根低点）。
     """
     if len(candles) < CANDLE_COUNT:
         raise ValueError(f"需要至少 {CANDLE_COUNT} 根已收盘 1H K 线")
-    range_candles = candles[-CANDLE_COUNT:-1]
+    range_candles = candles[-CANDLE_COUNT:-1]  # P1~P5，时间升序
     p6 = candles[-1]
     range_high = max(float(c["high"]) for c in range_candles)
     range_low = min(float(c["low"]) for c in range_candles)
     p6_high, p6_low = float(p6["high"]), float(p6["low"])
     p6_close = float(p6.get("close") if p6.get("close") is not None else p6["low"])
 
-    swept_high = p6_high > range_high
-    swept_low = p6_low < range_low
-    reclaimed = range_low <= p6_close <= range_high
-    # 正数表示 P6 高点仍在区间内 / 低点仍在区间上；负数表示已扫过边界。
-    dist_high = round(p6_high - range_high, 2)
-    dist_low = round(p6_low - range_low, 2)
-    valid = (swept_high or swept_low) and reclaimed
+    reclaimed_candidates: list[dict] = []
+    swept_candidates: list[dict] = []
+    # P5 -> P1，保证第一个命中就是最靠近 P6 的信号根
+    for idx in range(len(range_candles) - 1, -1, -1):
+        candle = range_candles[idx]
+        c_high, c_low = float(candle["high"]), float(candle["low"])
+        swept_high = p6_high > c_high
+        swept_low = p6_low < c_low
+        if not (swept_high or swept_low):
+            continue
+        reclaimed = c_low <= p6_close <= c_high
+        entry = {
+            "signal_index": idx + 1,
+            "signal_label": f"P{idx + 1}",
+            "signal_open": round(float(candle.get("open") or c_low), 2),
+            "signal_high": round(c_high, 2),
+            "signal_low": round(c_low, 2),
+            "signal_close": round(float(candle.get("close") or c_low), 2),
+            "swept_high": swept_high,
+            "swept_low": swept_low,
+            "swept_side": "双" if swept_high and swept_low else ("高" if swept_high else "低"),
+            "reclaimed_wick": reclaimed,
+            "dist_p6_high_to_signal_high": round(p6_high - c_high, 2),
+            "dist_p6_low_to_signal_low": round(p6_low - c_low, 2),
+        }
+        if reclaimed:
+            reclaimed_candidates.append(entry)
+        else:
+            swept_candidates.append(entry)
 
-    if swept_low and swept_high:
-        sweep_side = "双"
-        scenario = (
-            "P6 同时扫 P1-P5 区间高低点后收回 · CRT 成立 · 双向扫荡待确认"
-            if reclaimed else
-            "P6 同时扫 P1-P5 区间高低点但未收回 · CRT 未成立"
-        )
+    valid = bool(reclaimed_candidates)
+    chosen = (reclaimed_candidates or swept_candidates or [None])[0]
+
+    if chosen is None:
+        side = None
+        scenario = "P6 未扫 P1-P5 任一 K 线高低点 · CRT 未成立 · 待确认"
         bias = "中性"
-        target, stop_ref = None, None
-    elif swept_low:
-        sweep_side = "低"
-        if reclaimed:
-            scenario = "P6 扫 P1-P5 区间低点后收回 · CRT 成立 · 偏多反转确认"
-            bias = "偏多"
-            target, stop_ref = range_high, p6_low
-        else:
-            scenario = "P6 扫 P1-P5 区间低点后未收回 · CRT 未成立 · 偏空延续"
-            bias = "偏空"
-            target, stop_ref = None, range_low
-    elif swept_high:
-        sweep_side = "高"
-        if reclaimed:
-            scenario = "P6 扫 P1-P5 区间高点后收回 · CRT 成立 · 偏空反转确认"
-            bias = "偏空"
-            target, stop_ref = range_low, p6_high
-        else:
-            scenario = "P6 扫 P1-P5 区间高点后未收回 · CRT 未成立 · 偏多延续"
-            bias = "偏多"
-            target, stop_ref = None, range_high
+        target = stop_ref = None
+        reclaim_text = "未扫过 P1-P5 任一 K 线，无收回判定"
     else:
-        sweep_side = None
-        scenario = "P6 未扫 P1-P5 区间高低点 · CRT 未成立 · 区间内待确认"
-        bias = "中性"
-        target, stop_ref = None, None
+        side = chosen["swept_side"]
+        label = chosen["signal_label"]
+        reclaim_text = (
+            f"收盘收回 {label} 影线内（{chosen['signal_low']:.2f}~{chosen['signal_high']:.2f}）"
+            if chosen["reclaimed_wick"] else
+            f"收盘未收回 {label} 影线内（{chosen['signal_low']:.2f}~{chosen['signal_high']:.2f}）"
+        )
+        if side == "双":
+            scenario = (
+                f"P6 同时扫 {label} 高低点后收回该根影线内 · CRT 成立 · 双向扫荡待确认"
+                if valid else
+                f"P6 同时扫 {label} 高低点但未收回该根影线内 · CRT 未成立"
+            )
+            bias = "中性"
+            target = stop_ref = None
+        elif side == "低":
+            if valid:
+                scenario = f"P6 扫 {label} 低点后收回该根影线内 · CRT 成立 · 偏多反转确认"
+                bias = "偏多"
+                target, stop_ref = chosen["signal_high"], p6_low
+            else:
+                scenario = f"P6 扫 {label} 低点后未收回该根影线内 · CRT 未成立 · 偏空延续"
+                bias = "偏空"
+                target, stop_ref = None, chosen["signal_low"]
+        else:  # side == "高"
+            if valid:
+                scenario = f"P6 扫 {label} 高点后收回该根影线内 · CRT 成立 · 偏空反转确认"
+                bias = "偏空"
+                target, stop_ref = chosen["signal_low"], p6_high
+            else:
+                scenario = f"P6 扫 {label} 高点后未收回该根影线内 · CRT 未成立 · 偏多延续"
+                bias = "偏多"
+                target, stop_ref = None, chosen["signal_high"]
 
-    return {
+    result = {
+        # 背景区间（仅参考，不是触发边界）
         "range_high": round(range_high, 2),
         "range_low": round(range_low, 2),
         "p6_high": round(p6_high, 2),
         "p6_low": round(p6_low, 2),
         "p6_close": round(p6_close, 2),
-        "p6_sweep_side": sweep_side,
-        "p6_swept_range_high": swept_high,
-        "p6_swept_range_low": swept_low,
-        "p6_reclaimed_range": reclaimed,
-        "p6_reclaim_text": (
-            "收盘收回 P1-P5 区间" if reclaimed else "收盘未收回 P1-P5 区间"
-        ),
         "crt_valid": valid,
-        "dist_p6_high_to_range_high": dist_high,
-        "dist_p6_low_to_range_low": dist_low,
         "p6_scenario": scenario,
         "p6_bias": bias,
         "p6_target": round(target, 2) if target is not None else None,
         "p6_stop_ref": round(stop_ref, 2) if stop_ref is not None else None,
+        "reclaim_text": reclaim_text,
     }
+    if chosen:
+        result.update(chosen)
+    else:
+        result.update({
+            "signal_index": None, "signal_label": None,
+            "signal_open": None, "signal_high": None,
+            "signal_low": None, "signal_close": None,
+            "swept_high": False, "swept_low": False, "swept_side": None,
+            "reclaimed_wick": False,
+            "dist_p6_high_to_signal_high": None,
+            "dist_p6_low_to_signal_low": None,
+        })
+
+    # 旧字段名兼容：指向主信号根（而非聚合区间）
+    result.update({
+        "p6_sweep_side": result["swept_side"],
+        "p6_swept_range_high": result["swept_high"],
+        "p6_swept_range_low": result["swept_low"],
+        "p6_reclaimed_range": result["reclaimed_wick"],
+        "p6_reclaim_text": reclaim_text,
+        "dist_p6_high_to_range_high": result["dist_p6_high_to_signal_high"],
+        "dist_p6_low_to_range_low": result["dist_p6_low_to_signal_low"],
+    })
+    return result
+
+
+# 旧名称兼容别名；语义已改为逐根判定
+p6_vs_range = p6_vs_candles
 
 
 def crt_snapshot(symbol: str, candles: list[dict]) -> dict:
@@ -408,37 +468,40 @@ def crt_snapshot(symbol: str, candles: list[dict]) -> dict:
             f"{symbol} 1H 已收盘 K 线不足 {CANDLE_COUNT} 根，无法计算六根 CRT"
         )
     six = [dict(c) for c in candles[-CANDLE_COUNT:]]
-    p6 = p6_vs_range(six)
+    p6 = p6_vs_candles(six)
     range_high, range_low = p6["range_high"], p6["range_low"]
+    signal_high, signal_low = p6["signal_high"], p6["signal_low"]
+    ref_high = signal_high if signal_high is not None else range_high
+    ref_low = signal_low if signal_low is not None else range_low
     sixth = six[-1]
     c6_open = float(sixth.get("open") or sixth["low"])
     c6_close = float(sixth.get("close") or sixth["low"])
-    equilibrium = (range_high + range_low) / 2.0
+    equilibrium = (ref_high + ref_low) / 2.0
     body_pct = (
         round(abs(c6_close - c6_open) / (p6["p6_high"] - p6["p6_low"]) * 100.0, 1)
         if p6["p6_high"] > p6["p6_low"] else 0.0
     )
 
-    side = p6["p6_sweep_side"]
-    if side:
-        sweep_text = (
-            "同时扫 P1-P5 区间高低点" if side == "双"
-            else f"扫 P1-P5 区间{side}点"
-        )
+    side, label = p6["swept_side"], p6["signal_label"]
+    if label:
+        if side == "双":
+            sweep_text = f"同时扫 {label} 高低点"
+        elif side:
+            sweep_text = f"扫 {label} {side}点"
+        else:
+            sweep_text = f"未扫 {label} 高低点"
         sweep_desc = (
-            f"P6 {sweep_text}（高 {p6['p6_high']:.2f} / "
-            f"低 {p6['p6_low']:.2f}），收盘 {p6['p6_close']:.2f} "
-            f"{'已收回' if p6['p6_reclaimed_range'] else '未收回'} "
-            f"区间（{range_low:.2f}~{range_high:.2f}）"
+            f"P6 {sweep_text}（高 {p6['p6_high']:.2f} / 低 {p6['p6_low']:.2f} / "
+            f"收 {p6['p6_close']:.2f}）；{p6['reclaim_text']}"
         )
     else:
         sweep_desc = (
-            f"P6 未扫 P1-P5 区间高低点（高 {p6['p6_high']:.2f} / "
+            f"P6 未扫 P1-P5 任一 K 线高低点（高 {p6['p6_high']:.2f} / "
             f"低 {p6['p6_low']:.2f} / 收 {p6['p6_close']:.2f}）"
         )
     scenario, bias = p6["p6_scenario"], p6["p6_bias"]
     summary = (
-        f"P1-P5 区间 高 {range_high:.2f} / 低 {range_low:.2f}；"
+        f"P1-P5 背景区间 高 {range_high:.2f} / 低 {range_low:.2f}；"
         f"{sweep_desc}；情景 {scenario}（{bias}）。"
     )
     return {
@@ -447,24 +510,29 @@ def crt_snapshot(symbol: str, candles: list[dict]) -> dict:
         "label": SYMBOL_LABELS.get(symbol, symbol),
         "as_of": sixth["time"],
         "timeframe": TIMEFRAME,
+        "rule_version": 2,  # 逐根 K 线判定（旧快照缺此字段时按 6 根重算）
         **{f"candle{i}": dict(c) for i, c in enumerate(six, start=1)},
         "range_high": range_high,
         "range_low": range_low,
-        # 旧字段兼容：区间边界即当前阻力/支撑，P6 即当前 K 线
-        "sweep_high": range_high, "sweep_low": range_low,
+        # 旧字段兼容：指向主信号根边界，P6 即当前 K 线
+        "sweep_high": ref_high, "sweep_low": ref_low,
         "current_high": p6["p6_high"], "current_low": p6["p6_low"],
         "current_close": p6["p6_close"],
-        "prev_high": range_high, "prev_low": range_low,
+        "prev_high": ref_high, "prev_low": ref_low,
         "equilibrium": round(equilibrium, 2),
         "body_pct": body_pct,
         "sweep_side": side,
-        "swept_prev_high": p6["p6_swept_range_high"],
-        "swept_prev_low": p6["p6_swept_range_low"],
+        "swept_prev_high": p6["swept_high"],
+        "swept_prev_low": p6["swept_low"],
         **p6,
-        "dist_high_to_resistance": round(range_high - p6["p6_high"], 2),
-        "dist_low_to_support": round(p6["p6_low"] - range_low, 2),
-        "dist_sweep_low_to_support": 0.0,
-        "dist_sweep_high_to_resistance": 0.0,
+        "dist_high_to_resistance": round(ref_high - p6["p6_high"], 2),
+        "dist_low_to_support": round(p6["p6_low"] - ref_low, 2),
+        "dist_sweep_low_to_support": (
+            round(p6["p6_low"] - ref_low, 2) if ref_low is not None else None
+        ),
+        "dist_sweep_high_to_resistance": (
+            round(ref_high - p6["p6_high"], 2) if ref_high is not None else None
+        ),
         "scenario": scenario,
         "bias": bias,
         "target": p6["p6_target"],

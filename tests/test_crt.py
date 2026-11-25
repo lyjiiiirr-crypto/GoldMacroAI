@@ -47,7 +47,7 @@ def chart_payload(bars):
 
 
 def six_bars():
-    """P1~P5 定区间（101 / 94），P6 扫高 103 后收回 100。"""
+    """P5 高 100 / 低 95.5；P6 扫 P5 高点 103 后收回 P5 影线内（收 100）。"""
     return [
         bar(ts(20, 2), 95, 100, 94, 99),
         bar(ts(20, 3), 99, 101, 95, 99),
@@ -137,70 +137,106 @@ class CrtMathTests(unittest.TestCase):
         self.assertEqual(snap["timeframe"], "1h")
         self.assertEqual(len(snap["candles"]), 6)
 
-    def test_crt_sweep_range_high_then_reclaim_is_bearish(self):
+    def test_crt_sweep_signal_high_then_reclaim_is_bearish(self):
         snap = crt_snapshot("XAUUSD", six_bars())
+        self.assertEqual(snap["rule_version"], 2)
+        # P1~P5 最高/最低只作背景区间
         self.assertEqual(snap["range_high"], 101.0)
         self.assertEqual(snap["range_low"], 94.0)
-        self.assertTrue(snap["p6_swept_range_high"])
-        self.assertFalse(snap["p6_swept_range_low"])
-        self.assertTrue(snap["p6_reclaimed_range"])
+        self.assertEqual(snap["signal_label"], "P5")
+        self.assertEqual(snap["signal_index"], 5)
+        self.assertEqual(snap["signal_high"], 100.0)
+        self.assertEqual(snap["signal_low"], 95.5)
+        self.assertTrue(snap["swept_high"])
+        self.assertFalse(snap["swept_low"])
+        self.assertEqual(snap["swept_side"], "高")
+        self.assertTrue(snap["reclaimed_wick"])
         self.assertTrue(snap["crt_valid"])
-        self.assertEqual(snap["p6_sweep_side"], "高")
         self.assertEqual(snap["scenario"],
-                         "P6 扫 P1-P5 区间高点后收回 · CRT 成立 · 偏空反转确认")
+                         "P6 扫 P5 高点后收回该根影线内 · CRT 成立 · 偏空反转确认")
         self.assertEqual(snap["bias"], "偏空")
-        self.assertEqual(snap["target"], 94.0)
+        self.assertEqual(snap["target"], 95.5)
         self.assertEqual(snap["stop_ref"], 103.0)
-        self.assertEqual(snap["dist_p6_high_to_range_high"], 2.0)
-        self.assertEqual(snap["dist_p6_low_to_range_low"], 2.0)
+        self.assertEqual(snap["dist_p6_high_to_signal_high"], 3.0)
+        self.assertEqual(snap["dist_p6_low_to_signal_low"], 0.5)
+        # 旧字段别名仍指向主信号根
+        self.assertTrue(snap["p6_swept_range_high"])
+        self.assertTrue(snap["p6_reclaimed_range"])
+        self.assertEqual(snap["dist_p6_high_to_range_high"], 3.0)
         self.assertEqual(len(snap["candles"]), 6)
         self.assertEqual(snap["timeframe"], "1h")
 
-    def test_crt_sweep_range_low_then_reclaim_is_bullish(self):
+    def test_crt_sweep_signal_low_then_reclaim_is_bullish(self):
         snap = crt_snapshot("XAUUSD", with_sixth(92, 100, 97))
-        self.assertTrue(snap["p6_swept_range_low"])
-        self.assertTrue(snap["p6_reclaimed_range"])
+        self.assertEqual(snap["signal_label"], "P5")
+        self.assertTrue(snap["swept_low"])
+        self.assertTrue(snap["reclaimed_wick"])
         self.assertTrue(snap["crt_valid"])
         self.assertEqual(snap["scenario"],
-                         "P6 扫 P1-P5 区间低点后收回 · CRT 成立 · 偏多反转确认")
+                         "P6 扫 P5 低点后收回该根影线内 · CRT 成立 · 偏多反转确认")
         self.assertEqual(snap["bias"], "偏多")
-        self.assertEqual(snap["target"], 101.0)
+        self.assertEqual(snap["target"], 100.0)
         self.assertEqual(snap["stop_ref"], 92.0)
 
     def test_crt_sweep_high_without_reclaim_stays_invalid(self):
         snap = crt_snapshot("XAUUSD", with_sixth(98, 104, 102))
-        self.assertTrue(snap["p6_swept_range_high"])
-        self.assertFalse(snap["p6_reclaimed_range"])
+        self.assertEqual(snap["signal_label"], "P5")
+        self.assertTrue(snap["swept_high"])
+        self.assertFalse(snap["reclaimed_wick"])
         self.assertFalse(snap["crt_valid"])
         self.assertEqual(snap["bias"], "偏多")
         self.assertIsNone(snap["target"])
-        self.assertEqual(snap["stop_ref"], 101.0)
+        self.assertEqual(snap["stop_ref"], 100.0)
 
     def test_crt_sweep_low_without_reclaim_stays_invalid(self):
         snap = crt_snapshot("XAUUSD", with_sixth(90, 100, 93))
-        self.assertTrue(snap["p6_swept_range_low"])
+        self.assertEqual(snap["signal_label"], "P5")
+        self.assertTrue(snap["swept_low"])
         self.assertFalse(snap["crt_valid"])
         self.assertEqual(snap["bias"], "偏空")
-        self.assertEqual(snap["stop_ref"], 94.0)
+        self.assertEqual(snap["stop_ref"], 95.5)
 
     def test_crt_both_sides_swept_is_neutral(self):
         snap = crt_snapshot("XAUUSD", with_sixth(92, 103, 97))
-        self.assertTrue(snap["p6_swept_range_high"])
-        self.assertTrue(snap["p6_swept_range_low"])
+        self.assertEqual(snap["signal_label"], "P5")
+        self.assertTrue(snap["swept_high"])
+        self.assertTrue(snap["swept_low"])
+        self.assertEqual(snap["swept_side"], "双")
         self.assertTrue(snap["crt_valid"])
-        self.assertEqual(snap["p6_sweep_side"], "双")
         self.assertEqual(snap["bias"], "中性")
         self.assertIsNone(snap["target"])
-        self.assertIn("同时扫 P1-P5 区间高低点", snap["summary"])
+        self.assertIn("同时扫 P5 高低点", snap["summary"])
 
-    def test_crt_pending_when_no_sweep(self):
-        snap = crt_snapshot("XAUUSD", with_sixth(95, 100.5, 98))
-        self.assertFalse(snap["p6_swept_range_high"])
-        self.assertFalse(snap["p6_swept_range_low"])
+    def test_crt_pending_when_no_candle_swept(self):
+        # P6 高 99.5 / 低 97：不越过任何一根 P1~P5 的高/低点
+        snap = crt_snapshot("XAUUSD", with_sixth(97, 99.5, 98))
+        self.assertIsNone(snap["signal_label"])
+        self.assertFalse(snap["swept_high"])
+        self.assertFalse(snap["swept_low"])
         self.assertFalse(snap["crt_valid"])
-        self.assertIn("未扫 P1-P5 区间高低点", snap["scenario"])
+        self.assertIn("未扫 P1-P5 任一 K 线高低点", snap["scenario"])
         self.assertEqual(snap["bias"], "中性")
         self.assertIsNone(snap["target"])
+        self.assertIsNone(snap["dist_p6_high_to_signal_high"])
+
+    def test_crt_prefers_closest_qualifying_candle_p5_over_p4(self):
+        # P5 与 P4 均被扫且收回；P5 离 P6 最近，应作为主信号
+        snap = crt_snapshot("XAUUSD", with_sixth(96, 103, 99))
+        self.assertEqual(snap["signal_label"], "P5")
+        self.assertIn("P6 扫 P5 高点", snap["scenario"])
+        self.assertNotIn("P4", snap["scenario"])
+
+    def test_crt_falls_back_to_p4_when_p5_not_swept(self):
+        # P5 高 100/低 95.5 未被扫；P4 高 99.5 被扫且收 98 收回影线内
+        snap = crt_snapshot("XAUUSD", with_sixth(97, 99.8, 98))
+        self.assertEqual(snap["signal_label"], "P4")
+        self.assertEqual(snap["signal_index"], 4)
+        self.assertEqual(snap["signal_high"], 99.5)
+        self.assertEqual(snap["signal_low"], 97.0)
+        self.assertTrue(snap["crt_valid"])
+        self.assertEqual(snap["bias"], "偏空")
+        self.assertEqual(snap["target"], 97.0)
+        self.assertEqual(snap["stop_ref"], 99.8)
 
     def test_crt_needs_six_closed_candles(self):
         with self.assertRaises(ValueError):
@@ -354,13 +390,14 @@ class CrtReportTests(unittest.TestCase):
     def setUp(self):
         self.snap = crt_snapshot("XAUUSD", six_bars())
 
-    def test_execution_lines_focus_on_p6_vs_range(self):
+    def test_execution_lines_focus_on_p6_vs_signal_candle(self):
         text = "\n".join(render_execution_lines({"crt": [self.snap]}))
         self.assertIn("1H CRT 六根结构", text)
-        self.assertIn("P1-P5 区间（当前参考）", text)
-        self.assertIn("P6 高低点距区间边界", text)
-        self.assertIn("高点距区间高点", text)
-        self.assertIn("低点距区间低点", text)
+        self.assertIn("P1-P5 背景区间", text)
+        self.assertIn("P6 高低点距信号根边界", text)
+        self.assertIn("高点距该根高点", text)
+        self.assertIn("低点距该根低点", text)
+        self.assertIn("信号根 P5（最靠近 P6，逐根判定）", text)
         self.assertIn("P6 收盘", text)
         self.assertIn("CRT 成立", text)
         self.assertIn("失效参考", text)
@@ -372,9 +409,9 @@ class CrtReportTests(unittest.TestCase):
 
     def test_execution_lines_report_reclaim_and_target(self):
         text = "\n".join(render_execution_lines({"crt": [self.snap]}))
-        self.assertIn("收盘收回 P1-P5 区间", text)
+        self.assertIn("收盘收回 P5 影线内（95.50~100.00）", text)
         self.assertIn("偏空反转确认", text)
-        self.assertIn("目标 94.00", text)
+        self.assertIn("目标 95.50", text)
 
     def test_execution_lines_do_not_use_distance_to_current_price(self):
         text = "\n".join(render_execution_lines({"crt": [self.snap]}))
@@ -424,17 +461,37 @@ class CrtReportTests(unittest.TestCase):
     def test_crt_lines_and_command_registered(self):
         text = "\n".join(render_crt_lines([self.snap]))
         self.assertIn("1H CRT 六根结构", text)
-        self.assertIn("P1-P5 区间", text)
+        self.assertIn("P1-P5 背景区间", text)
+        self.assertIn("信号根 P5（最靠近 P6）", text)
+        self.assertIn("距信号根高点 +3.00 点", text)
         self.assertIn("P6 收盘", text)
-        self.assertIn("扫过 P1-P5 区间高点", text)
+        self.assertIn("收盘收回 P5 影线内（95.50~100.00）", text)
+        self.assertIn("扫过 P5 高点", text)
         self.assertIn("非交易信号", text)
         self.assertIn("/crt", COMMANDS)
+
+    def test_crt_lines_recompute_legacy_snapshot_from_candles(self):
+        # 旧规则快照缺 rule_version，且情景/方向字段与新规则冲突，应按 6 根重算
+        legacy = dict(self.snap)
+        legacy.pop("rule_version", None)
+        legacy["scenario"] = "旧版结论"
+        legacy["bias"] = "旧版方向"
+        legacy["signal_label"] = None
+        legacy["swept_high"] = None
+        text = "\n".join(render_crt_lines([legacy]))
+        self.assertIn("信号根 P5（最靠近 P6）", text)
+        self.assertIn("偏空反转确认", text)
+        self.assertNotIn("旧版结论", text)
+        self.assertNotIn("旧版方向", text)
 
 
 class CrtChartTests(unittest.TestCase):
     def test_render_png_has_valid_signature(self):
-        png = render_crt_png(six_bars(), range_high=101, range_low=94,
-                             target=94, stop=103, crt_valid=True)
+        png = render_crt_png(
+            six_bars(), range_high=101, range_low=94,
+            target=95.5, stop=103, crt_valid=True,
+            signal_high=100, signal_low=95.5, signal_index=5,
+        )
         self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertGreater(len(png), 1000)
 

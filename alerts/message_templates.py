@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from analysis.gold_bias import DISCLAIMER, bias_label, score_bar
 from analysis.tech_gex_fusion import fuse, gex_bias
 from config import CHINA_TIMEZONE_OFFSET_HOURS, SERIES
-from data.crt import p6_vs_range
+from data.crt import p6_vs_candles
 
 ESC = html.escape
 
@@ -86,7 +86,7 @@ def render_fusion_lines(fusion: dict) -> list[str]:
 
 
 def _crt_p6_view(row: dict) -> dict:
-    """取 CRT 快照的 P6/P1-P5 区间视图；旧快照缺字段时用 6 根 K 线重算。"""
+    """取 CRT 快照的 P6/信号根视图；旧规则快照缺 rule_version 时用 6 根重算。"""
     data = row.get("payload") if isinstance(row.get("payload"), dict) else {}
 
     def pick(key, default=None):
@@ -107,10 +107,11 @@ def _crt_p6_view(row: dict) -> dict:
         "crt_valid": pick("crt_valid"),
     }
     for key in (
-        "p6_high", "p6_low", "p6_close", "p6_sweep_side",
-        "p6_swept_range_high", "p6_swept_range_low",
-        "p6_reclaimed_range", "p6_reclaim_text",
-        "dist_p6_high_to_range_high", "dist_p6_low_to_range_low",
+        "p6_high", "p6_low", "p6_close",
+        "signal_index", "signal_label", "signal_open", "signal_high",
+        "signal_low", "signal_close", "swept_high", "swept_low", "swept_side",
+        "reclaimed_wick", "reclaim_text",
+        "dist_p6_high_to_signal_high", "dist_p6_low_to_signal_low",
     ):
         view[key] = pick(key)
     if view["p6_high"] is None:
@@ -119,27 +120,26 @@ def _crt_p6_view(row: dict) -> dict:
         view["p6_low"] = pick("current_low")
     if view["p6_close"] is None:
         view["p6_close"] = pick("current_close")
-    view["legacy"] = not all(
-        view[key] is not None for key in ("p6_swept_range_high", "p6_swept_range_low")
-    )
 
+    view["legacy"] = pick("rule_version") != 2
     if view["legacy"]:
         candles = pick("candles") or []
         if len(candles) >= 6:
             try:
-                computed = p6_vs_range(candles[-6:])
+                computed = p6_vs_candles(candles[-6:])
             except (TypeError, ValueError, KeyError):
                 computed = None
             if computed:
                 for key in (
                     "range_high", "range_low", "p6_high", "p6_low", "p6_close",
-                    "p6_sweep_side", "p6_swept_range_high", "p6_swept_range_low",
-                    "p6_reclaimed_range", "p6_reclaim_text",
-                    "dist_p6_high_to_range_high", "dist_p6_low_to_range_low",
+                    "signal_index", "signal_label", "signal_open", "signal_high",
+                    "signal_low", "signal_close", "swept_high", "swept_low",
+                    "swept_side", "reclaimed_wick", "reclaim_text",
+                    "dist_p6_high_to_signal_high", "dist_p6_low_to_signal_low",
                 ):
                     if view[key] is None:
                         view[key] = computed[key]
-                # 旧快照的 P3/P2 情景与新规则冲突，以重算结果为准
+                # 旧规则的情景/方向与新规则冲突，以重算结果为准
                 view["scenario"] = computed["p6_scenario"]
                 view["bias"] = computed["p6_bias"]
                 view["target"] = computed["p6_target"]
@@ -150,18 +150,19 @@ def _crt_p6_view(row: dict) -> dict:
 
 
 def _p6_sweep_text(view: dict) -> str:
-    """供 /crt 与执行提醒共用的扫荡描述。"""
-    swept_high = bool(view.get("p6_swept_range_high"))
-    swept_low = bool(view.get("p6_swept_range_low"))
+    """供 /crt 与执行提醒共用的逐根扫荡描述。"""
+    label = view.get("signal_label") or "P1-P5 任一 K 线"
+    swept_high = bool(view.get("swept_high"))
+    swept_low = bool(view.get("swept_low"))
     if swept_high and swept_low:
-        return "同时扫过 P1-P5 区间高低点"
+        return f"同时扫过 {ESC(str(label))} 高低点"
     if swept_high:
-        return "扫过 P1-P5 区间高点"
+        return f"扫过 {ESC(str(label))} 高点"
     if swept_low:
-        return "扫过 P1-P5 区间低点"
+        return f"扫过 {ESC(str(label))} 低点"
     if view.get("legacy"):
         return "旧版快照，扫荡状态未记录"
-    return "未扫过 P1-P5 区间高低点"
+    return "未扫过 P1-P5 任一 K 线高低点"
 
 
 def render_crt_lines(crt: list[dict], *, limit: int = 2) -> list[str]:
@@ -191,18 +192,23 @@ def render_crt_lines(crt: list[dict], *, limit: int = 2) -> list[str]:
             f"{ESC(str(view['scenario']))}（{ESC(str(view['bias']))}）"
         )
         lines.append(
-            f"  P1-P5 区间 高 {num(view['range_high'])} / 低 {num(view['range_low'])}"
+            f"  P1-P5 背景区间 高 {num(view['range_high'])} / 低 {num(view['range_low'])}"
         )
+        if view["signal_label"]:
+            lines.append(
+                f"  信号根 {ESC(str(view['signal_label']))}（最靠近 P6）："
+                f"高 {num(view['signal_high'])} / 低 {num(view['signal_low'])} / "
+                f"收 {num(view['signal_close'])}"
+            )
         lines.append(
-            f"  P6 高 {num(view['p6_high'])}（距区间高点 "
-            f"{signed(view['dist_p6_high_to_range_high'])} 点）/ "
-            f"低 {num(view['p6_low'])}（距区间低点 "
-            f"{signed(view['dist_p6_low_to_range_low'])} 点）：{_p6_sweep_text(view)}"
+            f"  P6 高 {num(view['p6_high'])}（距信号根高点 "
+            f"{signed(view['dist_p6_high_to_signal_high'])} 点）/ "
+            f"低 {num(view['p6_low'])}（距信号根低点 "
+            f"{signed(view['dist_p6_low_to_signal_low'])} 点）：{_p6_sweep_text(view)}"
         )
         lines.append(
             f"  P6 收盘 {num(view['p6_close'])}："
-            f"{ESC(str(view['p6_reclaim_text'] or '收回状态未记录'))}"
-            f"（{num(view['range_low'])}~{num(view['range_high'])}）；"
+            f"{ESC(str(view['reclaim_text'] or view.get('p6_reclaim_text') or '收回状态未记录'))}；"
             f"CRT {'成立' if view['crt_valid'] else '未成立'}"
         )
         refs = []
@@ -260,20 +266,23 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
             f"{ESC(str(view['scenario']))}（{ESC(str(view['bias']))}）"
         )
         lines.append(
-            f"- P1-P5 区间（当前参考）：高 {num(view['range_high'])}"
+            f"- P1-P5 背景区间：高 {num(view['range_high'])}"
             f" / 低 {num(view['range_low'])}"
         )
         lines.append(
-            f"- P6 高低点距区间边界：高点距区间高点 "
-            f"{signed(view['dist_p6_high_to_range_high'])} 点"
-            f"（{'已扫过' if view['p6_swept_range_high'] else '未扫过'}），"
-            f"低点距区间低点 {signed(view['dist_p6_low_to_range_low'])} 点"
-            f"（{'已扫过' if view['p6_swept_range_low'] else '未扫过'}）"
+            f"- 信号根 {ESC(str(view['signal_label'] or '—'))}（最靠近 P6，逐根判定）："
+            f"高 {num(view['signal_high'])} / 低 {num(view['signal_low'])}"
+        )
+        lines.append(
+            f"- P6 高低点距信号根边界：高点距该根高点 "
+            f"{signed(view['dist_p6_high_to_signal_high'])} 点"
+            f"（{'已扫过' if view['swept_high'] else '未扫过'}），"
+            f"低点距该根低点 {signed(view['dist_p6_low_to_signal_low'])} 点"
+            f"（{'已扫过' if view['swept_low'] else '未扫过'}）"
         )
         lines.append(
             f"- P6 收盘 {num(view['p6_close'])}："
-            f"{ESC(str(view['p6_reclaim_text'] or '收回状态未记录'))}"
-            f"（{num(view['range_low'])}~{num(view['range_high'])}）；"
+            f"{ESC(str(view['reclaim_text'] or view.get('p6_reclaim_text') or '收回状态未记录'))}；"
             f"CRT {'成立' if view['crt_valid'] else '未成立'}"
         )
         refs = []
@@ -289,7 +298,7 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
         chart_ready = False
         lines.append("- 1H CRT：暂无数据（运行 --sync-only 或 --import-crt 导入）")
         lines.append(
-            "- 1H 结构：等待至少 6 根已收盘 1H K 线后判断 P1-P5 区间与 P6 扫荡"
+            "- 1H 结构：等待至少 6 根已收盘 1H K 线后逐根判断 P6 扫荡与收回"
         )
 
     if fusion and fusion.get("direction"):
@@ -302,7 +311,7 @@ def render_execution_lines(market: dict, fusion: dict | None = None,
             " → 与 1H 情景冲突时降级观望，先等结构确认"
         )
     lines += [
-        "- LTF：1H/15M 以 P6 扫荡与收盘是否收回 P1-P5 区间为依据，等回测确认再入场，不追价",
+        "- LTF：1H/15M 以 P6 扫荡与收盘是否收回被扫那根 K 线影线内为依据，等回测确认再入场，不追价",
         f"- 宏观（{macro_bias or '方向'}）≠ 入场信号；止损先行，单笔风险可控",
     ]
     if chart_ready:
