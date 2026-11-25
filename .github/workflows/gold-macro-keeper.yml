@@ -1,9 +1,9 @@
 name: GoldMacroAI cloud keeper
 
 # GitHub 原生 schedule 事件在本仓库完全不触发，因此用一个云端常驻的
-# workflow_dispatch 链代替定时器：每次运行等到下一个 UTC 整点后 6 分钟
-# （hh:06），触发日报工作流，再触发下一次 keeper。每小时推送一次。
-# 全程在 GitHub Actions 云端完成，不依赖本地电脑；公开仓库免费额度内。
+# workflow_dispatch 链代替定时器：每次运行等到下一个 UTC 整点后 1 分钟
+# （hh:01），触发日报工作流，再触发下一次 keeper。每小时检查一次；
+# 日报/图表仅在 CRT 成立时推送，未成立时静默。全程云端完成，不依赖本地电脑。
 on:
   workflow_dispatch:
 
@@ -24,7 +24,7 @@ jobs:
           from datetime import datetime, timedelta, timezone
 
           now = datetime.now(timezone.utc)
-          nxt = now.replace(minute=6, second=0, microsecond=0)
+          nxt = now.replace(minute=1, second=0, microsecond=0)
           if nxt <= now:
               nxt += timedelta(hours=1)
           # ceil: never wake up before the target second, otherwise the next

@@ -432,8 +432,13 @@ def run_once(db: Database | None = None, *, dry_run: bool = False, send: bool = 
     report = render_daily_report(score, analysis, market)
     print("\n" + report + "\n")
 
+    crt_rows = market.get("crt") or []
+    crt_valid = any(
+        bool(r.get("crt_valid") or (r.get("payload") or {}).get("crt_valid"))
+        for r in crt_rows
+    )
     result = {"score": score, "analysis": analysis, "report": report, "sent": [],
-              "collection": collection}
+              "collection": collection, "crt_valid": crt_valid}
 
     if demo or dry_run:
         return result
@@ -447,6 +452,9 @@ def run_once(db: Database | None = None, *, dry_run: bool = False, send: bool = 
                                              "analysis": analysis})
 
     if send:
+        if not crt_valid:
+            print("[notify] CRT 未成立，本次保持静默（不推送日报/图表/提醒）。")
+            return result
         delivered, channel = notify(report, title="XAUUSD 宏观日报")
         if delivered:
             result["sent"].append(f"daily_report({channel})")
@@ -466,7 +474,7 @@ def run_once(db: Database | None = None, *, dry_run: bool = False, send: bool = 
                 print(f"[chart] 6 根 1H 截图生成失败: {exc}")
             if chart:
                 photo_ok, photo_channel = notify_photo(
-                    chart, caption="6根1H K线（P1-P5区间 / P6扫荡与收回）",
+                    chart, caption="6根1H K线（信号根扫荡 / P6收回影线内）",
                     title="1H CRT K线",
                 )
                 if photo_ok:

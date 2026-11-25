@@ -16,7 +16,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 
 - 仓库：<https://github.com/lyjiiiirr-crypto/GoldMacroAI>（Public）
 - **重要**：GitHub 原生 `schedule` 事件在本仓库实测完全不触发（主工作流与全新探针工作流均为 0 次 schedule run，GitHub 状态页正常），因此不再依赖原生 cron。
-- `.github/workflows/gold-macro-keeper.yml`：云端调度链。每次运行计算下一个 UTC 整点后 6 分钟（hh:06，北京时间同为整点后 6 分钟），等待到点后触发日报工作流，再用内置 `GITHUB_TOKEN` 触发下一次 keeper，形成闭环。**每小时推送一次**Telegram 日报与 CRT 截图。全程在 GitHub Actions 云端完成，**不依赖本地电脑**。
+- `.github/workflows/gold-macro-keeper.yml`：云端调度链。每次运行计算下一个 UTC 整点后 1 分钟（hh:01，北京时间同为整点后 1 分钟），等待到点后触发日报工作流，再用内置 `GITHUB_TOKEN` 触发下一次 keeper，形成闭环。**每小时检查一次；仅当 CRT 成立时推送** Telegram 日报与 CRT 截图，CRT 未成立保持静默。全程在 GitHub Actions 云端完成，**不依赖本地电脑**。
 - `.github/workflows/gold-macro.yml`：只保留 `workflow_dispatch`，由 keeper 触发；也可在 Actions 页面点 **Run workflow** 手动触发。带 `concurrency: gold-macro-report`，防止同一时段重复推送。
 - 首次启用：在 Actions 手动运行一次 `GoldMacroAI cloud keeper`（无需输入参数），之后自动每小时续链。若链因 GitHub API 故障中断，再次手动运行该工作流即可恢复。
 - 所需 Secrets（Settings → Secrets and variables → Actions）：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`NTFY_TOPIC`。密钥只存在 GitHub Secrets，不进代码库；keeper 只使用内置 `GITHUB_TOKEN`，无需新建 secret。
@@ -71,7 +71,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
 | 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/fusion` `/crt` `/bias` `/report` `/help` |
-| 定时任务 | GitHub 云端 keeper 链每小时触发，在 1H 收线后约 6 分钟（每小时 UTC hh:06 / 北京整点后 6 分钟）采集并推送 Telegram，历史数据库自动保存回仓库；不依赖本地电脑 |
+| 定时任务 | GitHub 云端 keeper 链每小时触发，在 1H 收线后约 1 分钟（每小时 UTC hh:01 / 北京整点后 1 分钟）采集检查；**仅 CRT 成立时推送** Telegram 日报与 CRT 截图，未成立保持静默；历史数据库自动保存回仓库；不依赖本地电脑 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
 **V1.0 仍不做/限制**：CME 官方 FedWatch API（收费，本项目使用社区公开归档，非官方承诺）、Trading Central 授权研报（商业/B2B 产品，无可验证免费公开源，本项目改用公开行情本地自算并明确标注非官方研报）、市场一致预期（BLS/BEA 不发布，故不伪造"意外值"，仍可人工导入）、秒级行情监控、交易结构识别（V2.0）。
@@ -89,7 +89,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
 | 黄金技术面 | XAUS 免费公开实时行情历史日线（`XAUS_HISTORY_URL`），失败回退 Yahoo Finance `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | 只取已定稿日线，盘中未收盘根会被丢弃；SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
 | GEX / Gamma flip | [Cboe 免费延迟期权报价](https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json) `GLD`、`SPY`（`GEX_SYMBOLS` 可配置） | 免费公开接口，约 15 分钟延迟，单次请求返回整条链（含未平仓量 / IV / gamma）。Yahoo 免费链现网未平仓量常为 0，故改用 Cboe；本项目用 IV 本地按 Black-Scholes 估算（IV 缺失时回退 Cboe gamma）。GEX = Γ×OI×100×S²×0.01（看涨为正、看跌为负），flip 由整条链重定价找净 GEX 过零点。**数据延迟、未含真实做市商库存，仅作研究背景，非交易信号** |
-| 1H CRT 六根结构 | XAUS 60m 原生已收盘 OHLC（`XAUS_CHART_URL`）提供 P1~P6；TradingView scanner（`TV_CRT_SYMBOL` / `TV_CRT_URL`）的 `[1]` 已收盘列覆盖 P6；Yahoo 1H（`YHOO_CRT_URL`）为辅 | 只接受 `data_state.status=fresh` 且 `data_state.as_of` 在允许时差内的数据；60m 就是目标时间框架，无需 4H 聚合。免费 scanner 常只返回 `[1]`（最近一根已收盘），时间戳严格对齐后用它覆盖 P6 的 OHLC，避免把当前未完成根当成收盘；不再用实时现货覆盖收盘，六根均为完整 K 线。按 UTC 整点收线（北京整点）；采集时点在收线后约 6 分钟；逐根判定 P6 是否扫过 P1~P5 中任意一根的高/低点，且收盘回到该根 [低, 高] 内才算 CRT 成立，多根满足取最靠近 P6 的一根（P5 优先）；结构参考位由信号根/P6 边界给出。**近似值，未回测，非交易信号** |
+| 1H CRT 六根结构 | XAUS 60m 原生已收盘 OHLC（`XAUS_CHART_URL`）提供 P1~P6；TradingView scanner（`TV_CRT_SYMBOL` / `TV_CRT_URL`）的 `[1]` 已收盘列覆盖 P6；Yahoo 1H（`YHOO_CRT_URL`）为辅 | 只接受 `data_state.status=fresh` 且 `data_state.as_of` 在允许时差内的数据；60m 就是目标时间框架，无需 4H 聚合。免费 scanner 常只返回 `[1]`（最近一根已收盘），时间戳严格对齐后用它覆盖 P6 的 OHLC，避免把当前未完成根当成收盘；不再用实时现货覆盖收盘，六根均为完整 K 线。按 UTC 整点收线（北京整点）；采集时点在收线后约 1 分钟；逐根判定 P6 是否扫过 P1~P5 中任意一根的高/低点，且收盘回到该根 [低, 高] 内才算 CRT 成立，多根满足取最靠近 P6 的一根（P5 优先）；结构参考位由信号根/P6 边界给出。**近似值，未回测，非交易信号；仅 CRT 成立时推送** |
 | Polymarket 利率预测 | [Polymarket Gamma API](https://gamma-api.polymarket.com)（`POLYMARKET_GAMMA_URL` 可配置） | 免费公开市场元数据与 Yes 赔率，无密钥；失败时优雅降级，可用 `--import-polymarket` 人工导入。仅作报告上下文，不参与评分 |
 
 ## 目录结构
@@ -265,7 +265,7 @@ python main.py --listen
    - `TELEGRAM_CHAT_ID`
    - （可选）`CLOUD_AI_BASE_URL` / `CLOUD_AI_API_KEY` / `CLOUD_AI_MODEL`
 4. 进入 `Actions`，手动运行 `GoldMacroAI scheduled run` 验证日报与 Telegram 推送。
-5. 再手动运行一次 `GoldMacroAI cloud keeper` 启动调度链；之后每小时自动触发（UTC hh:06 / 北京整点后 6 分钟），数据库提交回仓库。
+5. 再手动运行一次 `GoldMacroAI cloud keeper` 启动调度链；之后每小时自动触发检查（UTC hh:01 / 北京整点后 1 分钟）；仅 CRT 成立时推送 Telegram，未成立保持静默，数据库仍提交回仓库。
 
 **云端注意**：GitHub 原生 `schedule` 在本仓库不可用，调度完全依赖 keeper 链（见上）。本地 Ollama 地址 `localhost:11434` 云端访问不到，云端默认使用规则分析。公开仓库的 GitHub Actions 分钟免费；若改为私有仓库需自行确认免费额度。
 
