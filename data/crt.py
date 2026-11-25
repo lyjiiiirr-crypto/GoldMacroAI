@@ -7,9 +7,10 @@ HTF 三根结构（ICT 单根 K 线版 Power of Three）：
     以及 P3 收盘是否收回 P2 区间。
 描述已收线结构，不预测下一根；未回测，非交易信号。
 
-已收盘 4H 优先尝试 TradingView 公开 scanner 的 `[1]/[2]/[3]` 偏移列
-（OANDA:XAUUSD，4H 收线为北京时间 10/14/18/22/02/06，即 UTC 02/06/10/14/18/22）；
-该接口通常只返回未完成根，因此稳定来源为 Yahoo 1H 本地聚合，TradingView 仅作现价参考。
+已收盘 4H 优先使用 XAUS 免费公开实时行情的 5 分钟采样本地聚合
+（与 spot 同源、带 data_state 新鲜度校验，每根 4H 必须含满 4 个小时）；
+失败时回退 TradingView scanner / Yahoo 1H 聚合，最后才用本地历史快照。
+4H 收线为北京时间 10/14/18/22/02/06，即 UTC 02/06/10/14/18/22。
 数据为免费公开近似值，未回测，非交易信号。
 """
 from __future__ import annotations
@@ -20,8 +21,10 @@ from datetime import datetime, timezone
 
 from config import CRT_SYMBOLS, TV_CRT_SYMBOL, TV_CRT_URL, YHOO_CRT_URL
 from data.common import fetch_json, fetch_text, fetch_yahoo_texts
+from data.xaus import fetch_intraday, parse_intraday
 
 SOURCE_NAME = "TradingView 公开行情（4H CRT）"
+XAUS_SOURCE = "XAUS 公开实时行情（5m 采样聚合 4H CRT）"
 FALLBACK_SOURCE = "Yahoo Finance 公开行情（本地聚合 4H CRT）"
 SYMBOL_LABELS = {
     "GC=F": "COMEX黄金期货",
@@ -34,8 +37,8 @@ BUCKET_SECONDS = 4 * 3600
 CLOSE_OFFSET_HOURS = 2
 OFFSET_SECONDS = CLOSE_OFFSET_HOURS * 3600
 DISCLAIMER = (
-    "4H CRT 三根结构优先取自 TradingView 公开行情（OANDA:XAUUSD 4H），"
-    "失败时回退 Yahoo Finance 1H 本地聚合；为价格结构研究与流程提醒，"
+    "4H CRT 三根结构优先取自 XAUS 免费公开实时行情（5m 采样本地聚合），"
+    "失败时回退 TradingView / Yahoo Finance；为价格结构研究与流程提醒，"
     "未回测，不构成交易信号。"
 )
 
@@ -100,8 +103,13 @@ def parse_yahoo_intraday(payload: dict, limit: int = 400) -> list[dict]:
     return rows[-limit:]
 
 
-def aggregate_4h(bars: list[dict], *, drop_unclosed: bool = True) -> list[dict]:
-    """把 1H K 线聚合为收线对齐 UTC 02/06/... 的 4H K 线。"""
+def aggregate_4h(bars: list[dict], *, drop_unclosed: bool = True,
+                 min_bars: int = 1) -> list[dict]:
+    """把 1H K 线聚合为收线对齐 UTC 02/06/... 的 4H K 线。
+
+    ``min_bars`` 可要求每根 4H 至少由 N 根 1H 组成，避免用缺小时的不完整根
+    当成已收盘 K 线（这正是旧 Yahoo 源收盘价偏差的来源之一）。
+    """
     buckets: dict[int, dict] = {}
     for bar in bars:
         start = _bucket_start(bar["ts"])
@@ -120,6 +128,8 @@ def aggregate_4h(bars: list[dict], *, drop_unclosed: bool = True) -> list[dict]:
         # 当前所在桶尚未收线，其预计收线时刻必须排除；只保留已收盘 K 线
         current_bucket_close = _bucket_start(time.time()) + BUCKET_SECONDS
         candles = [row for row in candles if row["ts"] < current_bucket_close]
+    if min_bars > 1:
+        candles = [row for row in candles if row["bars"] >= min_bars]
     return candles
 
 
@@ -220,6 +230,37 @@ def _tv_scan(symbol: str) -> list[dict]:
     # 偏移列不可用：退而求其次，只取当前根（由调用方用 DB/Yahoo 补历史）
     current = parse_tv_scan(payload)
     return [current] if current else []
+
+
+def _fetch_xaus_candles(symbol: str) -> list[dict]:
+    """XAUS 第一方 5m 采样：聚合成仅含完整 4 根 1H 的已收盘 4H K 线。
+
+    实测 ``/chart`` 的 upstream OHLC 可能与 ``/spot`` 相差数十美元，
+    这里改用与实时现货同源的 ``/intraday`` 采样价。每小时至少 4 个样本、
+    每根 4H 至少 4 个小时，避免用不完整桶的盘中快照冒充收盘价。
+    """
+    if symbol.upper() not in {"XAUUSD", "OANDA:XAUUSD", "GC=F"}:
+        return []
+    try:
+        payload = fetch_intraday("xau", 24)
+        samples = parse_intraday(payload)
+    except Exception:  # noqa: BLE001 - 回退 TradingView / Yahoo
+        return []
+
+    hourly: dict[int, dict] = {}
+    for sample in samples:
+        hour_ts = (sample["ts"] // 3600) * 3600
+        price = sample["price"]
+        row = hourly.setdefault(hour_ts, {
+            "ts": hour_ts, "open": price, "high": price,
+            "low": price, "close": price, "samples": 0,
+        })
+        row["high"] = max(row["high"], price)
+        row["low"] = min(row["low"], price)
+        row["close"] = price  # 采样按时间升序，最后一个即该小时末价
+        row["samples"] += 1
+    bars = [hourly[key] for key in sorted(hourly) if hourly[key]["samples"] >= 4]
+    return aggregate_4h(bars, min_bars=4)
 
 
 def _fetch_yahoo_candles(symbol: str) -> list[dict]:
@@ -544,20 +585,29 @@ def collect(db, symbols: list[str] | tuple[str, ...] | None = None) -> dict:
 def _collect_one(db, symbol: str) -> dict:
     """取最近 3 根已收盘 4H K 线。
 
-    TradingView scanner 若返回 `[1]/[2]/[3]` 偏移列则直接计算；实测该接口通常
-    只返回当前未完成根，因此已收盘 K 线以 Yahoo 1H 本地聚合为准，TradingView
-    仅作为现价参考。两者都失败时退回本地历史快照。
+    优先 XAUS 实时 5m 采样聚合（带 data_state 新鲜度校验、只取完整 4 小时），
+    失败时依次回退 TradingView scanner / Yahoo 1H 聚合 / 本地历史快照。
     """
+    # 1) XAUS 实时行情：新鲜度 + 完整性校验后的已收盘 4H K 线
+    xaus = _fetch_xaus_candles(symbol)
+    if len(xaus) >= 3:
+        candles = xaus[-3:]
+        for candle in candles:
+            candle["source"] = XAUS_SOURCE
+        snap = crt_snapshot(symbol, candles)
+        snap["source"] = XAUS_SOURCE
+        return snap
+
     tv_symbol = TV_CRT_SYMBOL if symbol.upper() in {"XAUUSD", "OANDA:XAUUSD"} else symbol
     tv_candles = _tv_scan(tv_symbol)
 
-    # 1) TradingView 偏移列可用：直接得到 3 根已收盘 K 线
+    # 2) TradingView 偏移列可用：直接得到 3 根已收盘 K 线
     if len(tv_candles) >= 3:
         snap = crt_snapshot(symbol, tv_candles[-3:])
         snap["source"] = SOURCE_NAME
         return snap
 
-    # 2) Yahoo 1H 聚合：稳定提供按 UTC 02/06/... 收线的已收盘 4H K 线
+    # 3) Yahoo 1H 聚合回退
     yahoo = _fetch_yahoo_candles(symbol)
     if len(yahoo) >= 3:
         candles = yahoo[-3:]
@@ -569,7 +619,7 @@ def _collect_one(db, symbol: str) -> dict:
             snap["tv_price"] = tv_candles[-1].get("close")
         return snap
 
-    # 3) 本地历史：最近 3 根已收盘快照（首次运行可能不足，优雅降级）
+    # 4) 本地历史：最近 3 根已收盘快照（首次运行可能不足，优雅降级）
     history = _history_from_db(db, symbol, limit=3)
     if len(history) >= 3:
         snap = crt_snapshot(symbol, history[-3:])
@@ -578,4 +628,6 @@ def _collect_one(db, symbol: str) -> dict:
             snap["tv_price"] = tv_candles[-1].get("close")
         return snap
 
-    raise ValueError(f"{symbol} 无法获得 3 根已收盘 4H K 线（TradingView/Yahoo/本地历史均不可用）")
+    raise ValueError(
+        f"{symbol} 无法获得 3 根已收盘 4H K 线（XAUS/TradingView/Yahoo/本地历史均不可用）"
+    )

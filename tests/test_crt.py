@@ -86,6 +86,41 @@ class CrtMathTests(unittest.TestCase):
             candles = aggregate_4h(bars)
         self.assertEqual([c["time"][11:16] for c in candles], ["02:00", "06:00", "10:00"])
 
+    def test_aggregate_4h_min_bars_drops_incomplete_bucket(self):
+        bars = [bar(ts(20, h), 10 + h, 12 + h, 9 + h, 11 + h) for h in range(8)]
+        candles = aggregate_4h(bars, drop_unclosed=False, min_bars=4)
+        # 8 根小时线覆盖 3 个桶：2 / 4 / 2 根，只有中间桶完整
+        self.assertEqual(len(candles), 1)
+        self.assertEqual(candles[0]["time"][11:16], "06:00")
+        self.assertEqual(candles[0]["bars"], 4)
+        self.assertEqual(candles[0]["close"], 16.0)
+
+    def test_collect_prefers_xaus_realtime_source(self):
+        import time
+        from unittest.mock import patch
+
+        from data.crt import XAUS_SOURCE, _bucket_start, _collect_one
+
+        now = int(time.time())
+        current_start = _bucket_start(now)
+        # 当前桶之前 20 小时，每 5 分钟一个样本（5 个完整 4H 桶）
+        points = [{
+            "t": current_start - (20 * 12 - i) * 300, "p": 100 + i,
+        } for i in range(20 * 12)]
+        moment = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "points": points,
+            "data_state": {
+                "status": "fresh", "as_of": moment,
+                "source": "sampler", "age_seconds": 0,
+            },
+        }
+        with patch("data.crt.fetch_intraday", return_value=payload):
+            snap = _collect_one(None, "XAUUSD")
+        self.assertEqual(snap["source"], XAUS_SOURCE)
+        self.assertEqual(len(snap["candles"]), 3)
+        self.assertEqual(snap["candles"][-1]["close"], 339.0)
+
     def test_crt_bearish_power_of_three(self):
         snap = crt_snapshot("XAUUSD", power_of_three_bars())
         self.assertEqual(snap["range_high"], 100.0)

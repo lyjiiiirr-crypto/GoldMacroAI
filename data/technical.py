@@ -1,7 +1,9 @@
-"""技术面报告：Yahoo Finance 免费行情 + 本地规则计算。
+"""技术面报告：XAUS 公开实时行情 + 本地规则计算。
 
-数据与指标均来自公开行情和本项目自算逻辑，**不是 Trading Central 官方报告**，
-也不转载任何授权投研内容。报告仅描述价格结构，不构成交易建议。
+黄金优先使用 XAUS 免费公开实时行情的已定稿日线（免密钥、带 data_state
+新鲜度校验），失败时回退 Yahoo Finance。数据与指标均来自公开行情和本项目
+自算逻辑，**不是 Trading Central 官方报告**，也不转载任何授权投研内容。
+报告仅描述价格结构，不构成交易建议。
 """
 from __future__ import annotations
 
@@ -10,8 +12,15 @@ from datetime import datetime, timezone
 
 from config import TECHNICAL_SYMBOLS, YHOO_TECH_URL
 from data.common import fetch_json
+from data.xaus import (
+    DISCLAIMER as XAUS_DISCLAIMER,
+    SYMBOL_LABELS as XAUS_SYMBOL_LABELS,
+    fetch_history, history_as_of, parse_history,
+)
 
 SOURCE_NAME = "Yahoo Finance 公开行情 + 本地规则计算"
+XAUS_SOURCE = "XAUS 公开实时行情 + 本地规则计算"
+GOLD_SYMBOLS = {"GC=F", "XAUUSD", "XAUUSD=X", "OANDA:XAUUSD", "xau"}
 SYMBOL_LABELS = {
     "GC=F": "COMEX黄金期货",
     "DX-Y.NYB": "美元指数DXY",
@@ -162,7 +171,8 @@ def support_resistance(candles: list[dict], close: float,
 
 
 def build_report(symbol: str, candles: list[dict], *, label: str | None = None,
-                 report_type: str = REPORT_TYPE) -> dict:
+                 report_type: str = REPORT_TYPE, source: str | None = None,
+                 disclaimer: str | None = None) -> dict:
     """由日线序列生成结构化技术面报告。"""
     if len(candles) < MIN_BARS:
         raise ValueError(f"{symbol} 有效日线不足 {MIN_BARS} 根")
@@ -251,9 +261,9 @@ def build_report(symbol: str, candles: list[dict], *, label: str | None = None,
     summary += f"；支撑 {support_text}，阻力 {resistance_text}。"
 
     return {
-        "source": SOURCE_NAME,
+        "source": source or SOURCE_NAME,
         "symbol": symbol,
-        "label": label or SYMBOL_LABELS.get(symbol, symbol),
+        "label": label or SYMBOL_LABELS.get(symbol, XAUS_SYMBOL_LABELS.get(symbol, symbol)),
         "report_type": report_type,
         "as_of": last["date"],
         "close": round(close, 2),
@@ -263,33 +273,59 @@ def build_report(symbol: str, candles: list[dict], *, label: str | None = None,
         "signals": signals,
         "indicators": indicators,
         "levels": levels,
-        "disclaimer": DISCLAIMER,
+        "disclaimer": disclaimer or DISCLAIMER,
     }
 
 
 def collect(db, symbols: list[str] | tuple[str, ...] | None = None) -> dict:
-    """采集配置中的标的并写入 technical_reports（按来源+标的+日期+类型幂等）。"""
+    """采集配置中的标的并写入 technical_reports（按来源+标的+日期+类型幂等）。
+
+    黄金优先使用 XAUS 实时公开行情的已定稿日线；失败时回退 Yahoo Finance。
+    只有真正收盘的日线才参与指标计算，避免把盘中快照当成收盘价。
+    """
     targets = list(symbols or TECHNICAL_SYMBOLS)
     reports: list[dict] = []
     errors: list[str] = []
     for symbol in targets:
-        try:
-            payload = fetch_json(
-                YHOO_TECH_URL.format(symbol=symbol),
-                headers={"User-Agent": "Mozilla/5.0"}, timeout=40,
-            )
-            candles = parse_yahoo_ohlc(payload)
-            if len(candles) < MIN_BARS:
-                raise RuntimeError(f"有效日线仅 {len(candles)} 根")
-            report = build_report(symbol, candles)
-            result = (payload.get("chart") or {}).get("result") or [{}]
-            raw = json.dumps({
-                "meta": result[0].get("meta", {}),
-                "candles": candles[-400:],
-            }, ensure_ascii=False)
-        except Exception as exc:  # noqa: BLE001 - 单标的失败不影响其他标的
-            errors.append(f"{symbol}: {type(exc).__name__}: {exc}")
-            continue
+        report: dict | None = None
+        raw = ""
+        if symbol.upper() in GOLD_SYMBOLS:
+            try:
+                payload = fetch_history(days=400)
+                candles = parse_history(payload)
+                if len(candles) < MIN_BARS:
+                    raise RuntimeError(f"XAUS 有效日线仅 {len(candles)} 根")
+                report = build_report(
+                    symbol, candles,
+                    label=XAUS_SYMBOL_LABELS.get(symbol, "现货黄金 XAUUSD"),
+                    source=XAUS_SOURCE, disclaimer=XAUS_DISCLAIMER,
+                )
+                raw = json.dumps({
+                    "source": XAUS_SOURCE,
+                    "as_of": history_as_of(payload),
+                    "candles": candles[-400:],
+                }, ensure_ascii=False)
+            except Exception as exc:  # noqa: BLE001 - 回退 Yahoo
+                errors.append(f"{symbol}: XAUS: {type(exc).__name__}: {exc}")
+
+        if report is None:
+            try:
+                payload = fetch_json(
+                    YHOO_TECH_URL.format(symbol=symbol),
+                    headers={"User-Agent": "Mozilla/5.0"}, timeout=40,
+                )
+                candles = parse_yahoo_ohlc(payload)
+                if len(candles) < MIN_BARS:
+                    raise RuntimeError(f"有效日线仅 {len(candles)} 根")
+                report = build_report(symbol, candles)
+                result = (payload.get("chart") or {}).get("result") or [{}]
+                raw = json.dumps({
+                    "meta": result[0].get("meta", {}),
+                    "candles": candles[-400:],
+                }, ensure_ascii=False)
+            except Exception as exc:  # noqa: BLE001 - 单标的失败不影响其他标的
+                errors.append(f"{symbol}: Yahoo: {type(exc).__name__}: {exc}")
+                continue
 
         db.upsert_technical_report(
             source=report["source"], symbol=symbol, date=report["as_of"],
@@ -307,7 +343,7 @@ def collect(db, symbols: list[str] | tuple[str, ...] | None = None) -> dict:
         }
     latest = reports[0]
     return {
-        "ok": True, "source": SOURCE_NAME, "reports": len(reports),
+        "ok": True, "source": latest["source"], "reports": len(reports),
         "symbols": ",".join(r["symbol"] for r in reports),
         "errors": errors or None,
         "latest": {

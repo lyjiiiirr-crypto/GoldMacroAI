@@ -60,10 +60,10 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | FOMC 文件索引 | 自动索引 Statement / Minutes / Press Conference / SEP / 点阵图的官方链接 |
 | CFTC COT 自动采集 | 官方年度 ZIP，解析 COMEX 黄金 Managed Money 净多头、多空持仓与未平仓量 |
 | WGC ETF 自动采集 | 公开图表接口，按周汇总全球持仓吨数与资金流，保留分项数据 |
-| 技术面报告（本地自算） | Yahoo Finance 公开行情 `GC=F` 日线，自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
+| 技术面报告（本地自算） | 黄金优先用 XAUS 免费公开实时行情的已定稿日线（免密钥、带 `data_state` 新鲜度校验），失败回退 Yahoo Finance `GC=F`；自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
 | GEX 地图 / Gamma 翻转点 | Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），用 IV + 未平仓量按 Black-Scholes 本地估算 GEX、gamma flip 与对冲压力方向；延迟/近似值，**非交易信号、不参与宏观评分**，可人工导入 |
 | 技术面 × GEX 融合方向 | 技术面（SMA/RSI/MACD）定基础方向，GEX 通过现价与 gamma flip 的相对位置给出偏向并放大/削弱，输出**偏多 / 偏空 / 中性震荡**；写入日报、`/fusion` 可查，未回测、**不参与宏观评分** |
-| 4H CRT 三根结构 | 已收盘 4H K 线优先尝试 TradingView 公开 scanner（若支持 `[1]/[2]/[3]` 偏移列），实测该接口通常只返回未完成根，因此稳定来源为 Yahoo 1H 本地聚合（TradingView 仅作现价参考）；报告发出时 P3 已收线，因此当前信号由 **P3 是否扫过 P2 高低点、P3 收盘是否收回 P2 区间** 判定，P1 仅作历史背景。写入「交易执行提醒」并附 3 根 K 线图，`/crt` 可查，未回测、**非交易信号** |
+| 4H CRT 三根结构 | 已收盘 4H K 线优先用 XAUS 免费公开实时行情的 5 分钟采样本地聚合（与实时现货同源、带 `data_state` 新鲜度校验，每根 4H 必须含满 4 个小时），失败回退 TradingView scanner / Yahoo 1H 聚合；报告发出时 P3 已收线，当前信号由 **P3 是否扫过 P2 高低点、P3 收盘是否收回 P2 区间** 判定，P1 仅作历史背景。写入「交易执行提醒」并附 3 根 K 线图，`/crt` 可查，未回测、**非交易信号** |
 | Polymarket 利率预测 | 公开 Gamma API 读取利率市场当前 Yes 赔率，展示在「美联储政策预期」；**预测市场定价，非官方利率数据、不参与宏观评分**，可人工导入 |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
@@ -87,9 +87,9 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | FOMC 文件 | [federalreserve.gov](https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm) | 只保存标题、日期与官方链接，不转载正文；点阵图在 SEP 页面中 |
 | COT | [CFTC 官方历史 ZIP](https://www.cftc.gov/files/dea/history/) | COMEX 黄金 Managed Money 净多头；每周发布日期滞后约 3 天 |
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
-| 黄金技术面 | Yahoo Finance 公开行情 `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
+| 黄金技术面 | XAUS 免费公开实时行情历史日线（`XAUS_HISTORY_URL`），失败回退 Yahoo Finance `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | 只取已定稿日线，盘中未收盘根会被丢弃；SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
 | GEX / Gamma flip | [Cboe 免费延迟期权报价](https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json) `GLD`、`SPY`（`GEX_SYMBOLS` 可配置） | 免费公开接口，约 15 分钟延迟，单次请求返回整条链（含未平仓量 / IV / gamma）。Yahoo 免费链现网未平仓量常为 0，故改用 Cboe；本项目用 IV 本地按 Black-Scholes 估算（IV 缺失时回退 Cboe gamma）。GEX = Γ×OI×100×S²×0.01（看涨为正、看跌为负），flip 由整条链重定价找净 GEX 过零点。**数据延迟、未含真实做市商库存，仅作研究背景，非交易信号** |
-| 4H CRT 三根结构 | Yahoo 1H 本地聚合为主（`YHOO_CRT_URL`），TradingView scanner 为辅（`TV_CRT_SYMBOL` / `TV_CRT_URL` 可配置） | Yahoo 1H 聚合为按 UTC 02/06/10/14/18/22 收线的 3 根已收盘 4H（北京 10/14/18/22/02/06）；若 TradingView scanner 返回 `[1]/[2]`/`[3]` 偏移列则优先采用，否则只作现价参考。采集时点在收线后约 6 分钟；P1 仅作背景，按 P2 当前区间 + P3 扫荡/收盘收回判定；结构参考位由 P2/P3 边界给出。**近似值，未回测，非交易信号** |
+| 4H CRT 三根结构 | XAUS 第一方 5 分钟采样（`XAUS_INTRADAY_URL`，与 `spot` 同源）本地聚合为主，TradingView scanner（`TV_CRT_SYMBOL` / `TV_CRT_URL`）与 Yahoo 1H（`YHOO_CRT_URL`）为辅 | 只接受 `data_state.status=fresh` 且 `data_state.as_of` 在允许时差内的数据；实测 `chart` 的 upstream OHLC 可能与现货相差数十美元，因此 CRT 不用它做收盘价。每小时至少 4 个样本、每根 4H 必须含满 4 个小时，避免盘中快照被当成收盘价。按 UTC 02/06/10/14/18/22 收线（北京 10/14/18/22/02/06）；采集时点在收线后约 6 分钟；P1 仅作背景，按 P2 当前区间 + P3 扫荡/收盘收回判定；结构参考位由 P2/P3 边界给出。**近似值，未回测，非交易信号** |
 | Polymarket 利率预测 | [Polymarket Gamma API](https://gamma-api.polymarket.com)（`POLYMARKET_GAMMA_URL` 可配置） | 免费公开市场元数据与 Yes 赔率，无密钥；失败时优雅降级，可用 `--import-polymarket` 人工导入。仅作报告上下文，不参与评分 |
 
 ## 目录结构
@@ -190,7 +190,7 @@ python main.py --import-gex --date 2026-11-23 --gex-json gex_snapshot.json
 # 原始期权链响应（Cboe data.options 或 Yahoo optionChain.result[0]）→ 本地计算 GEX / flip
 python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rate 0.04
 
-# 4H CRT 三根结构：可传三根 K 线、区间/扫荡/扩张高低点，也可传 Yahoo chart 响应 / 1H K 线（自动采集以 Yahoo 1H 聚合为主）
+# 4H CRT 三根结构：可传三根 K 线、区间/扫荡/扩张高低点，也可传 XAUS intraday/chart / Yahoo chart 响应 / 1H K 线（自动采集优先 XAUS 5m 采样聚合）
 python main.py --import-crt --date 2026-11-23 --crt-json crt_snapshot.json
 # crt_snapshot.json 示例（三根 K 线）：
 # {"candle1":{"high":3629.6,"low":3567.8,"open":3580,"close":3610},
@@ -281,7 +281,7 @@ python main.py --listen
 
 - **报告显示「数据不足」**：先运行 `--sync-only` 看每个来源的成功/失败原因。若某个来源被网络限制，其他来源不受影响；仍可用 `--import-fedwatch` / `--import-event` / `--import-flow` 手工补齐。
 - **FedWatch 降息概率一直是 0%**：当前周期市场定价主要是"加息 vs 不变"，系统会自动改用鹰鸽净变化评分；报告里同时显示加息概率。
-- **需要 Trading Central 官方技术分析报告吗**：Trading Central 是商业/B2B 授权研报，官网无免费公开报告接口，本项目不抓取或转载其付费内容。当前技术面由 Yahoo Finance 公开行情本地自算，报告中明确标注来源；若你已有合法授权接口，可用 `--import-technical-report --report-json` 导入。
+- **需要 Trading Central 官方技术分析报告吗**：Trading Central 是商业/B2B 授权研报，官网无免费公开报告接口，本项目不抓取或转载其付费内容。当前技术面优先由 XAUS 公开实时行情（失败回退 Yahoo Finance）本地自算，报告中明确标注来源；若你已有合法授权接口，可用 `--import-technical-report --report-json` 导入。
 - **收不到推送**：没配置 Telegram 时先运行 `--setup-ntfy` 获取订阅网址；配置 Telegram 时确认已给机器人发过 `/start`、chat_id 正确（`--telegram-id` 可查），Token 未填错。
 - **AI 解读来源显示「规则模板」**：本地 Ollama 未启动或云端接口未配置，系统自动降级，不影响数据采集与推送。
 - **GitHub 数据库没更新**：确认仓库为私有且 Actions 有 `contents: write` 权限；工作流使用 `git add -f` 忽略本地 `.gitignore` 规则。
