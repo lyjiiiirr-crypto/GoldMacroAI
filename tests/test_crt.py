@@ -11,7 +11,7 @@ from alerts.message_templates import (
 from alerts.telegram_bot import COMMANDS
 from analysis.macro_score import compute_score
 from data.crt import (
-    aggregate_4h, crt_snapshot, parse_tv_candles, parse_tv_scan,
+    MIXED_SOURCE, aggregate_4h, crt_snapshot, parse_tv_candles, parse_tv_scan,
     parse_yahoo_intraday, snapshot_from_data,
 )
 from data.polymarket import build_snapshot, extract_markets, parse_rate_markets, snapshot_from_data as poly_from_data
@@ -101,25 +101,68 @@ class CrtMathTests(unittest.TestCase):
 
         from data.crt import XAUS_SOURCE, _bucket_start, _collect_one
 
-        now = int(time.time())
-        current_start = _bucket_start(now)
-        # 当前桶之前 20 小时，每 5 分钟一个样本（5 个完整 4H 桶）
+        current_start = _bucket_start(int(time.time()))
+        # 当前桶之前 20 根已收盘 1H（5 个完整 4H 桶）
         points = [{
-            "t": current_start - (20 * 12 - i) * 300, "p": 100 + i,
-        } for i in range(20 * 12)]
+            "t": current_start - (20 - i) * 3600, "o": 100 + i,
+            "h": 102 + i, "l": 99 + i, "c": 101 + i, "v": 10,
+        } for i in range(20)]
         moment = datetime.now(timezone.utc).isoformat()
         payload = {
             "points": points,
             "data_state": {
                 "status": "fresh", "as_of": moment,
-                "source": "sampler", "age_seconds": 0,
+                "source": "upstream", "age_seconds": 0,
             },
         }
-        with patch("data.crt.fetch_intraday", return_value=payload):
+        with patch("data.crt.fetch_chart", return_value=payload), \
+                patch("data.crt.fetch_spot", return_value=120.0), \
+                patch("data.crt.fetch_json", return_value={"data": []}):
             snap = _collect_one(None, "XAUUSD")
         self.assertEqual(snap["source"], XAUS_SOURCE)
         self.assertEqual(len(snap["candles"]), 3)
-        self.assertEqual(snap["candles"][-1]["close"], 339.0)
+        # 结构高低点来自 chart，P3 收盘被实时现货覆盖
+        self.assertEqual(snap["candles"][-1]["high"], 121.0)
+        self.assertEqual(snap["candles"][-1]["low"], 115.0)
+        self.assertEqual(snap["candles"][-1]["close"], 120.0)
+        self.assertEqual(snap["candles"][-1]["close_source"], "XAUS spot")
+
+    def test_collect_overrides_p3_with_closed_tv_offset(self):
+        import time
+        from unittest.mock import patch
+
+        from data.crt import _bucket_start, _collect_one
+
+        current_start = _bucket_start(int(time.time()))
+        points = [{
+            "t": current_start - (20 - i) * 3600, "o": 100 + i,
+            "h": 102 + i, "l": 99 + i, "c": 101 + i, "v": 10,
+        } for i in range(20)]
+        chart_payload = {
+            "points": points,
+            "data_state": {
+                "status": "fresh",
+                "as_of": datetime.now(timezone.utc).isoformat(),
+                "source": "upstream", "age_seconds": 0,
+            },
+        }
+        # 免费 TV scanner 常见响应：当前未完成根 + `[1]` 已收盘 P3，其余为 null
+        tv_payload = {"data": [{"d": [
+            3530.16, 3537.635, 3527.675, 3529.17,
+            3523.39, 3540.5, 3512.58, 3530.27,
+            None, None, None, None, None, None, None, None,
+        ]}]}
+        with patch("data.crt.fetch_chart", return_value=chart_payload), \
+                patch("data.crt.fetch_spot", return_value=120.0), \
+                patch("data.crt.fetch_json", return_value=tv_payload):
+            snap = _collect_one(None, "XAUUSD")
+        self.assertEqual(snap["source"], MIXED_SOURCE)
+        self.assertEqual(snap["p2_high"], 117.0)
+        self.assertEqual(snap["p2_low"], 111.0)
+        self.assertEqual(snap["p3_low"], 3512.58)
+        self.assertEqual(snap["p3_close"], 3530.27)
+        self.assertEqual(snap["candles"][-1]["source"], MIXED_SOURCE)
+        self.assertEqual(snap["candles"][-1]["close_source"], "TradingView 已收盘 [1]")
 
     def test_crt_bearish_power_of_three(self):
         snap = crt_snapshot("XAUUSD", power_of_three_bars())
@@ -235,6 +278,20 @@ class TradingViewCrtTests(unittest.TestCase):
         self.assertEqual(candles[-1]["low"], 92.0)
         snap = crt_snapshot("XAUUSD", candles)
         self.assertEqual(snap["bias"], "偏空")
+
+    def test_parse_tv_candles_accepts_partial_closed_offset(self):
+        # 免费 scanner 只返回 `[1]`：仍应作为最近一根已收盘 P3 使用
+        values = [
+            100, 101, 99, 100,             # 当前（未完成），不用
+            3523.39, 3540.5, 3512.58, 3530.27,  # [1] = P3
+        ] + [None] * 8
+        candles = parse_tv_candles(
+            {"data": [{"d": values}]}, now_ts=ts(20, 10, 1)
+        )
+        self.assertEqual(len(candles), 1)
+        self.assertEqual(candles[0]["time"][11:16], "10:00")
+        self.assertEqual(candles[0]["low"], 3512.58)
+        self.assertEqual(candles[0]["close"], 3530.27)
 
     def test_parse_tv_candles_rejects_bad_payload(self):
         self.assertEqual(parse_tv_candles({}), [])

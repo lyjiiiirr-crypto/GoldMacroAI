@@ -63,7 +63,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 技术面报告（本地自算） | 黄金优先用 XAUS 免费公开实时行情的已定稿日线（免密钥、带 `data_state` 新鲜度校验），失败回退 Yahoo Finance `GC=F`；自算 SMA/RSI/MACD/ATR 与支撑阻力；**不是 Trading Central 官方研报**，保留人工导入通道 |
 | GEX 地图 / Gamma 翻转点 | Cboe 免费延迟期权报价（GLD 黄金代理 + SPY 大盘），用 IV + 未平仓量按 Black-Scholes 本地估算 GEX、gamma flip 与对冲压力方向；延迟/近似值，**非交易信号、不参与宏观评分**，可人工导入 |
 | 技术面 × GEX 融合方向 | 技术面（SMA/RSI/MACD）定基础方向，GEX 通过现价与 gamma flip 的相对位置给出偏向并放大/削弱，输出**偏多 / 偏空 / 中性震荡**；写入日报、`/fusion` 可查，未回测、**不参与宏观评分** |
-| 4H CRT 三根结构 | 已收盘 4H K 线优先用 XAUS 免费公开实时行情的 5 分钟采样本地聚合（与实时现货同源、带 `data_state` 新鲜度校验，每根 4H 必须含满 4 个小时），失败回退 TradingView scanner / Yahoo 1H 聚合；报告发出时 P3 已收线，当前信号由 **P3 是否扫过 P2 高低点、P3 收盘是否收回 P2 区间** 判定，P1 仅作历史背景。写入「交易执行提醒」并附 3 根 K 线图，`/crt` 可查，未回测、**非交易信号** |
+| 4H CRT 三根结构 | 已收盘 4H K 线优先用 XAUS 免费公开实时行情的 60m OHLC 本地聚合（带 `data_state` 新鲜度校验，每根 4H 必须含满 4 根 1H）确定 P1/P2 结构；最新 P3 优先用 TradingView scanner 的已收盘 `[1]` 列覆盖，其次用 XAUS 实时现货价覆盖收盘，失败再回退 Yahoo 1H 聚合；报告发出时 P3 已收线，当前信号由 **P3 是否扫过 P2 高低点、P3 收盘是否收回 P2 区间** 判定，P1 仅作历史背景。写入「交易执行提醒」并附 3 根 K 线图，`/crt` 可查，未回测、**非交易信号** |
 | Polymarket 利率预测 | 公开 Gamma API 读取利率市场当前 Yes 赔率，展示在「美联储政策预期」；**预测市场定价，非官方利率数据、不参与宏观评分**，可人工导入 |
 | 宏观评分引擎 | 100 分制：政策预期 25 / 实际利率 25 / 美元 20 / 经济数据 15 / 资金流向 15 |
 | 方向分级 | ≥60 强烈偏多，≥25 温和偏多，-24~24 中性震荡，≤-25 温和偏空，≤-60 强烈偏空 |
@@ -89,7 +89,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | 黄金 ETF | [World Gold Council](https://www.gold.org/goldhub/data/gold-etfs-holdings-and-flows) 公开图表接口 | 版权归 WGC；XLSX 匿名下载受限，改用官网自身调用的 JSON |
 | 黄金技术面 | XAUS 免费公开实时行情历史日线（`XAUS_HISTORY_URL`），失败回退 Yahoo Finance `GC=F`（可配置 `TECHNICAL_SYMBOLS`） | 只取已定稿日线，盘中未收盘根会被丢弃；SMA / RSI / MACD / ATR 与支撑阻力由本项目纯 Python 计算；**并非 Trading Central 产品，也不转载其授权内容**，仅供研究 |
 | GEX / Gamma flip | [Cboe 免费延迟期权报价](https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json) `GLD`、`SPY`（`GEX_SYMBOLS` 可配置） | 免费公开接口，约 15 分钟延迟，单次请求返回整条链（含未平仓量 / IV / gamma）。Yahoo 免费链现网未平仓量常为 0，故改用 Cboe；本项目用 IV 本地按 Black-Scholes 估算（IV 缺失时回退 Cboe gamma）。GEX = Γ×OI×100×S²×0.01（看涨为正、看跌为负），flip 由整条链重定价找净 GEX 过零点。**数据延迟、未含真实做市商库存，仅作研究背景，非交易信号** |
-| 4H CRT 三根结构 | XAUS 第一方 5 分钟采样（`XAUS_INTRADAY_URL`，与 `spot` 同源）本地聚合为主，TradingView scanner（`TV_CRT_SYMBOL` / `TV_CRT_URL`）与 Yahoo 1H（`YHOO_CRT_URL`）为辅 | 只接受 `data_state.status=fresh` 且 `data_state.as_of` 在允许时差内的数据；实测 `chart` 的 upstream OHLC 可能与现货相差数十美元，因此 CRT 不用它做收盘价。每小时至少 4 个样本、每根 4H 必须含满 4 个小时，避免盘中快照被当成收盘价。按 UTC 02/06/10/14/18/22 收线（北京 10/14/18/22/02/06）；采集时点在收线后约 6 分钟；P1 仅作背景，按 P2 当前区间 + P3 扫荡/收盘收回判定；结构参考位由 P2/P3 边界给出。**近似值，未回测，非交易信号** |
+| 4H CRT 三根结构 | XAUS 60m 已收盘 OHLC（`XAUS_CHART_URL`）聚合 P1/P2 结构；TradingView scanner（`TV_CRT_SYMBOL` / `TV_CRT_URL`）的 `[1]` 已收盘列覆盖 P3，缺失时用 XAUS 现货（`XAUS_SPOT_URL`）覆盖 P3 收盘；Yahoo 1H（`YHOO_CRT_URL`）为辅 | 只接受 `data_state.status=fresh` 且 `data_state.as_of` 在允许时差内的数据；`chart` 的 upstream 收盘可能与现货偏差较大，所以只取已收盘 60m 的高低点。免费 scanner 常只返回 `[1]`（最近一根已收盘），时间戳对齐后用它覆盖 P3 的 OHLC，避免把当前未完成根当成收盘。每根 4H 必须含满 4 根已收盘 1H。按 UTC 02/06/10/14/18/22 收线（北京 10/14/18/22/02/06）；采集时点在收线后约 6 分钟；P1 仅作背景，按 P2 当前区间 + P3 扫荡/收盘收回判定；结构参考位由 P2/P3 边界给出。**近似值，未回测，非交易信号** |
 | Polymarket 利率预测 | [Polymarket Gamma API](https://gamma-api.polymarket.com)（`POLYMARKET_GAMMA_URL` 可配置） | 免费公开市场元数据与 Yes 赔率，无密钥；失败时优雅降级，可用 `--import-polymarket` 人工导入。仅作报告上下文，不参与评分 |
 
 ## 目录结构
@@ -190,7 +190,7 @@ python main.py --import-gex --date 2026-11-23 --gex-json gex_snapshot.json
 # 原始期权链响应（Cboe data.options 或 Yahoo optionChain.result[0]）→ 本地计算 GEX / flip
 python main.py --import-gex --symbol GLD --gex-json cboe_option_chain.json --rate 0.04
 
-# 4H CRT 三根结构：可传三根 K 线、区间/扫荡/扩张高低点，也可传 XAUS intraday/chart / Yahoo chart 响应 / 1H K 线（自动采集优先 XAUS 5m 采样聚合）
+# 4H CRT 三根结构：可传三根 K 线、区间/扫荡/扩张高低点，也可传 XAUS chart / Yahoo chart 响应 / 1H K 线（自动采集优先 XAUS 60m 结构 + TradingView 已收盘 P3）
 python main.py --import-crt --date 2026-11-23 --crt-json crt_snapshot.json
 # crt_snapshot.json 示例（三根 K 线）：
 # {"candle1":{"high":3629.6,"low":3567.8,"open":3580,"close":3610},
