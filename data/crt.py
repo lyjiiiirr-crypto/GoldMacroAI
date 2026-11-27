@@ -792,7 +792,33 @@ def _collect_one(db, symbol: str) -> dict:
     tv_symbol = TV_CRT_SYMBOL if symbol.upper() in {"XAUUSD", "OANDA:XAUUSD"} else symbol
     tv_candles = _tv_scan(tv_symbol)
 
-    # 1) XAUS 实时行情：fetch_chart 已校验新鲜度，parse_ohlc 已丢弃未完成根
+    # 1) Biquote 免费公开 OHLC 回退（无key，完整H/L/C，优先于5m采样聚合）
+    biquote = _reject_stale_candles(_fetch_biquote_candles(symbol))
+    if len(biquote) >= CANDLE_COUNT:
+        candles = [dict(c) for c in biquote[-CANDLE_COUNT:]]
+        for candle in candles:
+            candle["source"] = BIQUOTE_SOURCE
+        target_ts = candles[-1].get("end_ts")
+        tv_latest = next(
+            (item for item in reversed(tv_candles) if item.get("end_ts") == target_ts),
+            None,
+        )
+        if tv_latest is not None:
+            latest = candles[-1]
+            latest["open"] = tv_latest["open"]
+            latest["high"] = tv_latest["high"]
+            latest["low"] = tv_latest["low"]
+            latest["close"] = tv_latest["close"]
+            latest["close_source"] = "TradingView 已收盘 [1]"
+            latest["source"] = "Biquote 1H 结构 + TradingView 已收盘 P6"
+            snap = crt_snapshot(symbol, candles)
+            snap["source"] = "Biquote 1H 结构 + TradingView 已收盘 P6"
+            return snap
+        snap = crt_snapshot(symbol, candles)
+        snap["source"] = BIQUOTE_SOURCE
+        return snap
+
+    # 2) XAUS 实时行情：fetch_chart 已校验新鲜度，parse_ohlc 已丢弃未完成根
     xaus = _reject_stale_candles(_fetch_xaus_candles(symbol))
     if len(xaus) >= CANDLE_COUNT:
         candles = [dict(c) for c in xaus[-CANDLE_COUNT:]]
@@ -820,32 +846,6 @@ def _collect_one(db, symbol: str) -> dict:
 
         snap = crt_snapshot(symbol, candles)
         snap["source"] = XAUS_SOURCE
-        return snap
-
-    # 2) Biquote 免费公开 OHLC 回退（无key，完整H/L/C，优先于5m采样聚合）
-    biquote = _reject_stale_candles(_fetch_biquote_candles(symbol))
-    if len(biquote) >= CANDLE_COUNT:
-        candles = [dict(c) for c in biquote[-CANDLE_COUNT:]]
-        for candle in candles:
-            candle["source"] = BIQUOTE_SOURCE
-        target_ts = candles[-1].get("end_ts")
-        tv_latest = next(
-            (item for item in reversed(tv_candles) if item.get("end_ts") == target_ts),
-            None,
-        )
-        if tv_latest is not None:
-            latest = candles[-1]
-            latest["open"] = tv_latest["open"]
-            latest["high"] = tv_latest["high"]
-            latest["low"] = tv_latest["low"]
-            latest["close"] = tv_latest["close"]
-            latest["close_source"] = "TradingView 已收盘 [1]"
-            latest["source"] = "Biquote 1H 结构 + TradingView 已收盘 P6"
-            snap = crt_snapshot(symbol, candles)
-            snap["source"] = "Biquote 1H 结构 + TradingView 已收盘 P6"
-            return snap
-        snap = crt_snapshot(symbol, candles)
-        snap["source"] = BIQUOTE_SOURCE
         return snap
 
     # 3) XAUS 5m 采样聚合回退：chart 60m 过期时，用新鲜 intraday 聚合 1H（近似）
