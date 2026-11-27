@@ -569,9 +569,36 @@ class Database:
                 (float(score), bias, json.dumps(compact, ensure_ascii=False),
                  datetime.now().isoformat(timespec="seconds")),
             )
-            # keep git-tracked sqlite DB under GitHub's 100MB file limit
+            # keep git-tracked sqlite DB well under GitHub's 100MB file limit
             conn.execute(
-                "DELETE FROM reports WHERE id NOT IN (SELECT id FROM reports ORDER BY id DESC LIMIT 20)"
+                "DELETE FROM reports WHERE id NOT IN (SELECT id FROM reports ORDER BY id DESC LIMIT 10)"
+            )
+            conn.execute(
+                "DELETE FROM gex_snapshots WHERE rowid NOT IN (SELECT rowid FROM gex_snapshots ORDER BY as_of_date DESC, rowid DESC LIMIT 30)"
+            )
+            conn.execute(
+                "DELETE FROM crt_snapshots WHERE rowid NOT IN (SELECT rowid FROM crt_snapshots ORDER BY as_of DESC, rowid DESC LIMIT 60)"
+            )
+            conn.execute(
+                "DELETE FROM technical_reports WHERE rowid NOT IN (SELECT rowid FROM technical_reports ORDER BY report_date DESC, rowid DESC LIMIT 30)"
+            )
+            conn.execute(
+                "DELETE FROM polymarket_snapshots WHERE rowid NOT IN (SELECT rowid FROM polymarket_snapshots ORDER BY as_of_date DESC, rowid DESC LIMIT 60)"
+            )
+            conn.execute(
+                "DELETE FROM fedwatch_snapshots WHERE rowid NOT IN (SELECT rowid FROM fedwatch_snapshots ORDER BY snapshot_date DESC, id DESC LIMIT 120)"
+            )
+            conn.execute(
+                "DELETE FROM alert_log WHERE id NOT IN (SELECT id FROM alert_log ORDER BY id DESC LIMIT 200)"
+            )
+            conn.execute(
+                "DELETE FROM flows WHERE id NOT IN (SELECT id FROM flows ORDER BY id DESC LIMIT 300)"
+            )
+            conn.execute(
+                "DELETE FROM fomc_documents WHERE rowid NOT IN (SELECT rowid FROM fomc_documents ORDER BY doc_date DESC, rowid DESC LIMIT 30)"
+            )
+            conn.execute(
+                "DELETE FROM observations WHERE date < date('now', '-120 days')"
             )
             conn.commit()
         # best-effort shrink on-disk file; ignore if locked/unsupported
