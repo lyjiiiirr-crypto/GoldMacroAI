@@ -202,6 +202,27 @@ class CrtMathTests(unittest.TestCase):
         self.assertIn("Biquote", snap["source"])
         self.assertEqual(snap["candles"][-1]["end_ts"], ts(20, 6))
 
+    def test_collect_rejects_half_hour_aligned_xaus_chart(self):
+        from data.common import FetchError
+        # XAUS chart returns 60m bars ending at hh:30 - should be rejected as misaligned.
+        points = []
+        for h in range(6):
+            start = datetime(2026, 11, 27, h, 30, tzinfo=timezone.utc)
+            points.append({"t": int(start.timestamp()), "o": 100+h, "h": 101+h, "l": 99+h, "c": 100.5+h})
+        chart_payload = {"data_state": {"status": "fresh"}, "points": points}
+        bars = []
+        for h in range(6):
+            st = datetime(2026, 11, 27, h, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+            bars.append({"openTime": st, "open": 200+h, "high": 201+h, "low": 199+h, "close": 200.5+h, "isOpen": False})
+        def fake_fetch_json(url, *args, **kwargs):
+            if "biquote.io" in str(url):
+                return {"bars": bars}
+            return {"data": []}
+        with patch("data.crt.fetch_chart", return_value=chart_payload),                 patch("data.crt.fetch_json", side_effect=fake_fetch_json),                 patch("data.crt.time.time", return_value=ts(27, 7, 30)):
+            snap = _collect_one(None, "XAUUSD")
+        self.assertIn("Biquote", snap["source"])
+        self.assertTrue(all(c["end_ts"] % 3600 == 0 for c in snap["candles"]))
+
     def test_crt_sweep_signal_high_then_reclaim_is_bearish(self):
         snap = crt_snapshot("XAUUSD", six_bars())
         self.assertEqual(snap["rule_version"], 2)

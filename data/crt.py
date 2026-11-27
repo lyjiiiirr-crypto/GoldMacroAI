@@ -359,14 +359,52 @@ def _fetch_yahoo_candles(symbol: str) -> list[dict]:
     return []
 
 
-def _reject_stale_candles(candles: list[dict], *, now_ts: int | float | None = None) -> list[dict]:
-    """拒绝过期 K 线：最新已收盘根距当前整点过久则整组丢弃，避免陈旧报价冒充实时。"""
-    if len(candles) < CANDLE_COUNT:
+def _hour_aligned_1h(candles: list[dict]) -> list[dict]:
+    """Keep only 1H bars whose close is aligned to UTC hour boundary."""
+    rows = []
+    for c in candles or []:
+        end = _number((c or {}).get("end_ts"))
+        if end is None:
+            continue
+        if int(end) % BUCKET_SECONDS == 0:
+            rows.append(c)
+    rows.sort(key=lambda r: int(_number(r.get("end_ts")) or 0))
+    return rows
+
+
+def _consecutive_1h_tail(candles: list[dict], count: int = CANDLE_COUNT) -> list[dict]:
+    """Return the latest run of consecutive hour-aligned 1H bars."""
+    rows = _hour_aligned_1h(candles)
+    if len(rows) < count:
         return []
-    latest_end = int(candles[-1].get("end_ts") or 0)
+    best: list[dict] = []
+    run: list[dict] = []
+    prev_end = None
+    for c in rows:
+        end = int(_number(c.get("end_ts")) or 0)
+        if prev_end is None or end == prev_end + BUCKET_SECONDS:
+            run.append(c)
+        elif end == prev_end:
+            run[-1] = c
+        else:
+            if len(run) >= len(best):
+                best = run
+            run = [c]
+        prev_end = end
+    if len(run) >= len(best):
+        best = run
+    return best[-count:] if len(best) >= count else []
+
+
+def _reject_stale_candles(candles: list[dict], *, now_ts: int | float | None = None) -> list[dict]:
+    """Reject stale or misaligned 1H candles; keep only fresh consecutive hour-aligned bars."""
+    normalized = _consecutive_1h_tail(candles, CANDLE_COUNT)
+    if len(normalized) < CANDLE_COUNT:
+        return []
+    latest_end = int(normalized[-1].get("end_ts") or 0)
     if latest_end < _hour_close(now_ts) - MAX_CANDLE_AGE_SECONDS:
         return []
-    return candles
+    return normalized
 
 
 def _history_from_db(db, symbol: str, limit: int = CANDLE_COUNT) -> list[dict]:
@@ -755,7 +793,7 @@ def _collect_one(db, symbol: str) -> dict:
     tv_candles = _tv_scan(tv_symbol)
 
     # 1) XAUS 实时行情：fetch_chart 已校验新鲜度，parse_ohlc 已丢弃未完成根
-    xaus = _fetch_xaus_candles(symbol)
+    xaus = _reject_stale_candles(_fetch_xaus_candles(symbol))
     if len(xaus) >= CANDLE_COUNT:
         candles = [dict(c) for c in xaus[-CANDLE_COUNT:]]
         for candle in candles:
