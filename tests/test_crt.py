@@ -544,6 +544,35 @@ class CrtPushGateTests(unittest.TestCase):
         self.assertEqual(result["sent"], [])
         self.assertEqual(sent, [])
 
+    def test_run_once_send_silent_when_latest_invalid_but_older_valid(self):
+        from scheduler import jobs
+
+        market = {
+            "crt": [
+                {"crt_valid": False, "payload": {"crt_valid": False, "candles": six_bars()}},
+                {"crt_valid": True, "payload": {"crt_valid": True, "candles": six_bars()}},
+            ],
+            "technical": [], "gex": [], "calendar": [],
+        }
+        inputs = {"real_rate": {"delta_bp": -1, "stale": False}}
+        score = type("S", (), {"total": 0.0, "bias": "中性震荡", "confidence": 0.5,
+                               "signals": [], "warnings": [], "sufficient": True,
+                               "as_dict": lambda self=None: {}})()
+        sent = []
+        with tempfile.TemporaryDirectory() as folder:
+            db = Database(Path(folder) / "test.db")
+            db.init_schema()
+            with patch.object(jobs, "collect_all", return_value={}), \
+                    patch.object(jobs, "build_market", return_value=(market, inputs)), \
+                    patch.object(jobs, "compute_score", return_value=score), \
+                    patch.object(jobs, "generate_analysis", return_value={"text": "t", "source": "rule"}), \
+                    patch.object(jobs, "render_daily_report", return_value="report"), \
+                    patch.object(jobs, "notify", side_effect=lambda *a, **k: sent.append("notify") or (True, "telegram")):
+                result = jobs.run_once(db=db, send=True, collect_data=False)
+        self.assertFalse(result["crt_valid"])
+        self.assertEqual(result["sent"], [])
+        self.assertEqual(sent, [])
+
     def test_run_once_send_pushes_when_crt_valid(self):
         from scheduler import jobs
 

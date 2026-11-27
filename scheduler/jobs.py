@@ -433,9 +433,13 @@ def run_once(db: Database | None = None, *, dry_run: bool = False, send: bool = 
     print("\n" + report + "\n")
 
     crt_rows = market.get("crt") or []
-    crt_valid = any(
-        bool(r.get("crt_valid") or (r.get("payload") or {}).get("crt_valid"))
-        for r in crt_rows
+    # 只看最新一条 CRT 快照；历史窗口里旧的成立快照不能触发本次推送
+    latest_crt = crt_rows[0] if crt_rows else {}
+    latest_payload = latest_crt.get("payload") or {}
+    crt_valid = bool(
+        latest_crt.get("crt_valid")
+        if latest_crt.get("crt_valid") is not None
+        else latest_payload.get("crt_valid")
     )
     result = {"score": score, "analysis": analysis, "report": report, "sent": [],
               "collection": collection, "crt_valid": crt_valid}
