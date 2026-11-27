@@ -27,12 +27,13 @@ from datetime import datetime, timezone
 
 from config import CRT_SYMBOLS, TV_CRT_SYMBOL, TV_CRT_URL, YHOO_CRT_URL
 from data.common import fetch_json, fetch_text, fetch_yahoo_texts
-from data.xaus import fetch_chart, parse_ohlc
+from data.xaus import fetch_chart, fetch_intraday, parse_intraday, parse_ohlc
 
 SOURCE_NAME = "TradingView 公开行情（1H CRT）"
 XAUS_SOURCE = "XAUS 公开实时行情（60m 已收盘 OHLC）"
 MIXED_SOURCE = "XAUS 60m 结构 + TradingView 已收盘 P6"
 FALLBACK_SOURCE = "Yahoo Finance 公开行情（1H CRT）"
+INTRADAY_SOURCE = "XAUS 5m采样聚合（1H CRT，近似）"
 SYMBOL_LABELS = {
     "GC=F": "COMEX黄金期货",
     "XAUUSD": "现货黄金 XAUUSD",
@@ -256,6 +257,41 @@ def _fetch_xaus_candles(symbol: str) -> list[dict]:
         return [_closed_candle(bar, XAUS_SOURCE)
                 for bar in drop_unclosed_bars(bars)]
     except Exception:  # noqa: BLE001 - 回退 TradingView / Yahoo
+        return []
+
+
+def _aggregate_intraday_to_1h(points: list[dict], *, now_ts: int | float | None = None) -> list[dict]:
+    """将 XAUS 5m 采样点聚合为已收盘 1H OHLC（近似值，非交易所官方K线）。"""
+    cutoff = _hour_close(now_ts)
+    buckets: dict[int, list[dict]] = {}
+    for point in points or []:
+        ts = _number(point.get("ts"))
+        price = _number(point.get("price"))
+        if ts is None or price is None or price <= 0:
+            continue
+        end_ts = ((int(ts) // BUCKET_SECONDS) + 1) * BUCKET_SECONDS
+        if end_ts > cutoff:
+            continue
+        buckets.setdefault(end_ts, []).append({"ts": int(ts), "price": float(price)})
+    bars: list[dict] = []
+    for end_ts in sorted(buckets):
+        samples = sorted(buckets[end_ts], key=lambda row: row["ts"])
+        if len(samples) < 6:  # 5m 采样完整小时应有~12点；过少则不可靠
+            continue
+        prices = [row["price"] for row in samples]
+        bars.append(_candle(prices[0], max(prices), min(prices), prices[-1], end_ts, INTRADAY_SOURCE))
+    return bars
+
+
+def _fetch_xaus_intraday_candles(symbol: str) -> list[dict]:
+    """XAUS /intraday 5m 采样聚合为 1H K 线回退（fetch_intraday 已做新鲜度校验）。"""
+    if symbol.upper() not in {"XAUUSD", "OANDA:XAUUSD", "GC=F"}:
+        return []
+    try:
+        payload = fetch_intraday("xau", 48)
+        bars = _aggregate_intraday_to_1h(parse_intraday(payload))
+        return [_closed_candle(bar, INTRADAY_SOURCE) for bar in drop_unclosed_bars(bars)]
+    except Exception:  # noqa: BLE001
         return []
 
 
@@ -718,14 +754,40 @@ def _collect_one(db, symbol: str) -> dict:
         snap["source"] = XAUS_SOURCE
         return snap
 
-    # 2) TradingView 偏移列可用：直接得到已收盘 K 线
+    # 2) XAUS 5m 采样聚合回退：chart 60m 过期时，用新鲜 intraday 聚合 1H（近似）
+    intraday = _reject_stale_candles(_fetch_xaus_intraday_candles(symbol))
+    if len(intraday) >= CANDLE_COUNT:
+        candles = [dict(c) for c in intraday[-CANDLE_COUNT:]]
+        for candle in candles:
+            candle["source"] = INTRADAY_SOURCE
+        target_ts = candles[-1].get("end_ts")
+        tv_latest = next(
+            (item for item in reversed(tv_candles) if item.get("end_ts") == target_ts),
+            None,
+        )
+        if tv_latest is not None:
+            latest = candles[-1]
+            latest["open"] = tv_latest["open"]
+            latest["high"] = tv_latest["high"]
+            latest["low"] = tv_latest["low"]
+            latest["close"] = tv_latest["close"]
+            latest["close_source"] = "TradingView 已收盘 [1]"
+            latest["source"] = MIXED_SOURCE
+            snap = crt_snapshot(symbol, candles)
+            snap["source"] = MIXED_SOURCE
+            return snap
+        snap = crt_snapshot(symbol, candles)
+        snap["source"] = INTRADAY_SOURCE
+        return snap
+
+    # 3) TradingView 偏移列可用：直接得到已收盘 K 线
     tv_fresh = _reject_stale_candles(tv_candles[-CANDLE_COUNT:]) if len(tv_candles) >= CANDLE_COUNT else []
     if len(tv_fresh) >= CANDLE_COUNT:
         snap = crt_snapshot(symbol, tv_fresh)
         snap["source"] = SOURCE_NAME
         return snap
 
-    # 3) Yahoo 1H 聚合回退（拒绝过期报价，避免陈旧数据冒充实时）
+    # 4) Yahoo 1H 聚合回退（拒绝过期报价，避免陈旧数据冒充实时）
     yahoo = _reject_stale_candles(_fetch_yahoo_candles(symbol))
     if len(yahoo) >= CANDLE_COUNT:
         candles = yahoo[-CANDLE_COUNT:]
@@ -737,7 +799,7 @@ def _collect_one(db, symbol: str) -> dict:
             snap["tv_price"] = tv_candles[-1].get("close")
         return snap
 
-    # 4) 本地历史：仅在最新根仍新鲜时兜底；过期历史不参与 CRT 判定
+    # 5) 本地历史：仅在最新根仍新鲜时兜底；过期历史不参与 CRT 判定
     history = _reject_stale_candles(_history_from_db(db, symbol, limit=CANDLE_COUNT))
     if len(history) >= CANDLE_COUNT:
         snap = crt_snapshot(symbol, history[-CANDLE_COUNT:])
@@ -748,5 +810,5 @@ def _collect_one(db, symbol: str) -> dict:
 
     raise ValueError(
         f"{symbol} 无法获得 {CANDLE_COUNT} 根已收盘 1H K 线"
-        "（XAUS/TradingView/Yahoo/本地历史均不可用）"
+        "（XAUS chart/intraday/TradingView/Yahoo/本地历史均不可用）"
     )

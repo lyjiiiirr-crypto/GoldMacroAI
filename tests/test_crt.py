@@ -131,6 +131,7 @@ class CrtMathTests(unittest.TestCase):
         from data.common import FetchError
         yahoo = chart_payload([bar(ts(20, h), 95, 100, 94, 99) for h in range(12)])
         with patch("data.crt.fetch_chart", side_effect=FetchError("stale")), \
+                patch("data.crt.fetch_intraday", side_effect=FetchError("stale")), \
                 patch("data.crt.fetch_json", return_value={"data": []}), \
                 patch("data.crt.fetch_yahoo_texts", return_value=[json.dumps(yahoo)]), \
                 patch("data.crt.time.time", return_value=ts(20, 12, 30)):
@@ -142,11 +143,42 @@ class CrtMathTests(unittest.TestCase):
         from data.common import FetchError
         yahoo = chart_payload([bar(ts(20, h), 95, 100, 94, 99) for h in range(12)])
         with patch("data.crt.fetch_chart", side_effect=FetchError("stale")), \
+                patch("data.crt.fetch_intraday", side_effect=FetchError("stale")), \
                 patch("data.crt.fetch_json", return_value={"data": []}), \
                 patch("data.crt.fetch_yahoo_texts", return_value=[json.dumps(yahoo)]), \
                 patch("data.crt.time.time", return_value=ts(25, 12, 30)):
             with self.assertRaises(ValueError):
                 _collect_one(None, "XAUUSD")
+
+    def test_aggregate_intraday_to_1h_builds_closed_bars(self):
+        from data.crt import _aggregate_intraday_to_1h
+        points = []
+        for h in range(6):
+            base = ts(20, h)
+            for m in range(5, 61, 5):  # 12 samples, within hour ending h+1
+                points.append({"ts": base + m * 60, "price": 100 + h + (m / 60)})
+        bars = _aggregate_intraday_to_1h(points, now_ts=ts(20, 7, 30))
+        self.assertEqual(len(bars), 6)
+        self.assertEqual(bars[0]["end_ts"], ts(20, 1))
+        self.assertEqual(bars[-1]["end_ts"], ts(20, 6))
+        self.assertGreater(bars[0]["high"], bars[0]["low"])
+
+    def test_collect_falls_back_to_fresh_intraday_when_chart_stale(self):
+        from data.common import FetchError
+        points = []
+        for h in range(6):
+            base = ts(20, h)
+            for m in range(5, 61, 5):
+                points.append({"t": base + m * 60, "p": 100 + h + (m / 60)})
+        intraday_payload = {"data_state": {"status": "fresh"}, "points": points}
+        with patch("data.crt.fetch_chart", side_effect=FetchError("stale")), \
+                patch("data.crt.fetch_intraday", return_value=intraday_payload), \
+                patch("data.crt.fetch_json", return_value={"data": []}), \
+                patch("data.crt.time.time", return_value=ts(20, 7, 30)):
+            snap = _collect_one(None, "XAUUSD")
+        self.assertEqual(len(snap["candles"]), 6)
+        self.assertIn("5m采样聚合", snap["source"])
+        self.assertTrue(all(c.get("end_ts") <= ts(20, 7) for c in snap["candles"]))
 
     def test_crt_sweep_signal_high_then_reclaim_is_bearish(self):
         snap = crt_snapshot("XAUUSD", six_bars())
