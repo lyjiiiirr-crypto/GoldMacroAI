@@ -516,13 +516,73 @@ class Database:
         return result
 
     # ---- 历史报告 ----
+    @staticmethod
+    def _compact_report_payload(payload: dict) -> dict:
+        """Keep report history small enough for git storage.
+
+        The full market payload can include large raw GEX/technical blobs.
+        Reports only need score/analysis and a compact market summary for
+        debugging; raw snapshots are already stored in their own tables.
+        """
+        compact = json.loads(json.dumps(payload, ensure_ascii=False))
+        market = compact.get("market")
+        if isinstance(market, dict):
+            for key in ("gex", "technical", "crt", "polymarket", "fomc"):
+                value = market.get(key)
+                if isinstance(value, list):
+                    slim = []
+                    for item in value[:8]:
+                        if not isinstance(item, dict):
+                            continue
+                        keep = {}
+                        for k in ("source", "symbol", "as_of_date", "report_date", "report_type",
+                                  "spot", "net_gex", "gamma_flip", "call_wall", "put_wall",
+                                  "regime", "summary", "title", "bias", "created_at",
+                                  "time", "as_of", "label", "crt_valid", "bias_label",
+                                  "scenario", "rule_version"):
+                            if k in item:
+                                keep[k] = item[k]
+                        # keep small payload metadata, drop raw_json/large payload bodies
+                        p = item.get("payload")
+                        if isinstance(p, dict):
+                            mini = {}
+                            for pk in ("crt_valid", "bias", "scenario", "p6_close",
+                                       "signal_index", "as_of", "label", "rule_version"):
+                                if pk in p:
+                                    mini[pk] = p[pk]
+                            if mini:
+                                keep["payload"] = mini
+                        slim.append(keep)
+                    market[key] = slim
+            # drop bulky raw collections occasionally embedded in market
+            for key in ("events", "flows", "calendar"):
+                value = market.get(key)
+                if isinstance(value, list) and len(value) > 20:
+                    market[key] = value[:20]
+        return compact
+
     def save_report(self, score: float, bias: str, payload: dict) -> None:
+        compact = self._compact_report_payload(payload)
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO reports (score, bias, payload, created_at) VALUES (?, ?, ?, ?)",
-                (float(score), bias, json.dumps(payload, ensure_ascii=False),
+                (float(score), bias, json.dumps(compact, ensure_ascii=False),
                  datetime.now().isoformat(timespec="seconds")),
             )
+            # keep git-tracked sqlite DB under GitHub's 100MB file limit
+            conn.execute(
+                "DELETE FROM reports WHERE id NOT IN (SELECT id FROM reports ORDER BY id DESC LIMIT 20)"
+            )
+            conn.commit()
+        # best-effort shrink on-disk file; ignore if locked/unsupported
+        try:
+            raw = sqlite3.connect(str(self.path), timeout=30)
+            try:
+                raw.execute("VACUUM")
+            finally:
+                raw.close()
+        except Exception:
+            pass
 
     def reports(self, limit: int = 2) -> list[dict]:
         with self._connect() as conn:
