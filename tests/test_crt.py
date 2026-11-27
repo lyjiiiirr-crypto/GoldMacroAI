@@ -132,10 +132,21 @@ class CrtMathTests(unittest.TestCase):
         yahoo = chart_payload([bar(ts(20, h), 95, 100, 94, 99) for h in range(12)])
         with patch("data.crt.fetch_chart", side_effect=FetchError("stale")), \
                 patch("data.crt.fetch_json", return_value={"data": []}), \
-                patch("data.crt.fetch_yahoo_texts", return_value=[json.dumps(yahoo)]):
+                patch("data.crt.fetch_yahoo_texts", return_value=[json.dumps(yahoo)]), \
+                patch("data.crt.time.time", return_value=ts(20, 12, 30)):
             snap = _collect_one(None, "XAUUSD")
         self.assertEqual(snap["timeframe"], "1h")
         self.assertEqual(len(snap["candles"]), 6)
+
+    def test_collect_rejects_stale_fallback_candles(self):
+        from data.common import FetchError
+        yahoo = chart_payload([bar(ts(20, h), 95, 100, 94, 99) for h in range(12)])
+        with patch("data.crt.fetch_chart", side_effect=FetchError("stale")), \
+                patch("data.crt.fetch_json", return_value={"data": []}), \
+                patch("data.crt.fetch_yahoo_texts", return_value=[json.dumps(yahoo)]), \
+                patch("data.crt.time.time", return_value=ts(25, 12, 30)):
+            with self.assertRaises(ValueError):
+                _collect_one(None, "XAUUSD")
 
     def test_crt_sweep_signal_high_then_reclaim_is_bearish(self):
         snap = crt_snapshot("XAUUSD", six_bars())

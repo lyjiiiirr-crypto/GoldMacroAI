@@ -42,6 +42,7 @@ TIMEFRAME = "1h"
 BUCKET_SECONDS = 3600
 CANDLE_COUNT = 6
 RANGE_CANDLE_COUNT = 5
+MAX_CANDLE_AGE_SECONDS = 3 * BUCKET_SECONDS  # 最新已收盘根超过 3 小时视为过期，不可用于 CRT
 DISCLAIMER = (
     "1H CRT 的 P1~P5 优先取自 XAUS 免费公开实时行情（60m 已收盘 K 线），"
     "最新一根 P6 优先用 TradingView scanner 的已收盘列覆盖；"
@@ -290,6 +291,16 @@ def _fetch_yahoo_candles(symbol: str) -> list[dict]:
         if len(bars) >= CANDLE_COUNT:
             return [_closed_candle(bar, FALLBACK_SOURCE) for bar in bars]
     return []
+
+
+def _reject_stale_candles(candles: list[dict], *, now_ts: int | float | None = None) -> list[dict]:
+    """拒绝过期 K 线：最新已收盘根距当前整点过久则整组丢弃，避免陈旧报价冒充实时。"""
+    if len(candles) < CANDLE_COUNT:
+        return []
+    latest_end = int(candles[-1].get("end_ts") or 0)
+    if latest_end < _hour_close(now_ts) - MAX_CANDLE_AGE_SECONDS:
+        return []
+    return candles
 
 
 def _history_from_db(db, symbol: str, limit: int = CANDLE_COUNT) -> list[dict]:
@@ -708,13 +719,14 @@ def _collect_one(db, symbol: str) -> dict:
         return snap
 
     # 2) TradingView 偏移列可用：直接得到已收盘 K 线
-    if len(tv_candles) >= CANDLE_COUNT:
-        snap = crt_snapshot(symbol, tv_candles[-CANDLE_COUNT:])
+    tv_fresh = _reject_stale_candles(tv_candles[-CANDLE_COUNT:]) if len(tv_candles) >= CANDLE_COUNT else []
+    if len(tv_fresh) >= CANDLE_COUNT:
+        snap = crt_snapshot(symbol, tv_fresh)
         snap["source"] = SOURCE_NAME
         return snap
 
-    # 3) Yahoo 1H 聚合回退
-    yahoo = _fetch_yahoo_candles(symbol)
+    # 3) Yahoo 1H 聚合回退（拒绝过期报价，避免陈旧数据冒充实时）
+    yahoo = _reject_stale_candles(_fetch_yahoo_candles(symbol))
     if len(yahoo) >= CANDLE_COUNT:
         candles = yahoo[-CANDLE_COUNT:]
         for candle in candles:
@@ -725,8 +737,8 @@ def _collect_one(db, symbol: str) -> dict:
             snap["tv_price"] = tv_candles[-1].get("close")
         return snap
 
-    # 4) 本地历史：最近 6 根已收盘快照（首次运行可能不足，优雅降级）
-    history = _history_from_db(db, symbol, limit=CANDLE_COUNT)
+    # 4) 本地历史：仅在最新根仍新鲜时兜底；过期历史不参与 CRT 判定
+    history = _reject_stale_candles(_history_from_db(db, symbol, limit=CANDLE_COUNT))
     if len(history) >= CANDLE_COUNT:
         snap = crt_snapshot(symbol, history[-CANDLE_COUNT:])
         snap["source"] = "本地历史快照"
