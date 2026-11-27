@@ -175,6 +175,10 @@ YHOO_CRT_URL = env(
     "YHOO_CRT_URL",
     "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1mo&interval={interval}",
 )
+BIQUOTE_CRT_URL = env(
+    "BIQUOTE_CRT_URL",
+    "https://biquote.io/api/{symbol}/ohlc?interval=1h&limit=24",
+)
 CRT_SYMBOLS = tuple(
     s.strip() for s in env("CRT_SYMBOLS", "XAUUSD").split(",") if s.strip()
 )

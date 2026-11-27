@@ -180,6 +180,28 @@ class CrtMathTests(unittest.TestCase):
         self.assertIn("5m采样聚合", snap["source"])
         self.assertTrue(all(c.get("end_ts") <= ts(20, 7) for c in snap["candles"]))
 
+    def test_collect_falls_back_to_biquote_when_chart_stale(self):
+        from data.common import FetchError
+        bars = []
+        for h in range(6):
+            start = datetime(2026, 11, 20, h, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+            bars.append({"openTime": start, "open": 100+h, "high": 101+h, "low": 99+h, "close": 100.5+h, "isOpen": False})
+        biquote_payload = {"bars": bars}
+        # fetch_json will be called: first for TV scan, then for biquote
+        calls = {"n": 0}
+        def fake_fetch_json(url, *args, **kwargs):
+            calls["n"] += 1
+            if "biquote.io" in str(url):
+                return biquote_payload
+            return {"data": []}
+        with patch("data.crt.fetch_chart", side_effect=FetchError("stale")), \
+                patch("data.crt.fetch_json", side_effect=fake_fetch_json), \
+                patch("data.crt.time.time", return_value=ts(20, 7, 30)):
+            snap = _collect_one(None, "XAUUSD")
+        self.assertEqual(len(snap["candles"]), 6)
+        self.assertIn("Biquote", snap["source"])
+        self.assertEqual(snap["candles"][-1]["end_ts"], ts(20, 6))
+
     def test_crt_sweep_signal_high_then_reclaim_is_bearish(self):
         snap = crt_snapshot("XAUUSD", six_bars())
         self.assertEqual(snap["rule_version"], 2)
