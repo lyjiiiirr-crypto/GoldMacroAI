@@ -34,6 +34,7 @@ from data.calendar import format_calendar
 from data.fedwatch import format_snapshot
 from database.models import Database
 from scheduler.jobs import build_market, run_once
+from scheduler.market_hours import market_closed_status
 
 
 def set_env_value(key: str, value: str) -> None:
@@ -415,16 +416,21 @@ def main() -> int:
 
     if args.demo:
         run_once(db=db, demo=True)
-    elif args.sync_only:
-        result = run_once(db=db, sync_only=True, collect_data=not args.no_collect)
-        failures = [k for k, v in (result.get("collection") or {}).items()
-                    if not v.get("ok")]
-        print(f"[sync-only] 数据同步完成；失败来源：{', '.join(failures) or '无'}")
-    elif args.send_now or args.scheduled:
-        result = run_once(db=db, send=True, collect_data=not args.no_collect)
-        print(f"[done] 已推送：{', '.join(result['sent']) or '无'}")
     else:
-        run_once(db=db, dry_run=True, collect_data=not args.no_collect)
+        closed, reason = market_closed_status()
+        if closed:
+            print(f"[market] {reason}；暂停采集、评分、落库与推送。")
+            return 0
+        if args.sync_only:
+            result = run_once(db=db, sync_only=True, collect_data=not args.no_collect)
+            failures = [k for k, v in (result.get("collection") or {}).items()
+                        if not v.get("ok")]
+            print(f"[sync-only] 数据同步完成；失败来源：{', '.join(failures) or '无'}")
+        elif args.send_now or args.scheduled:
+            result = run_once(db=db, send=True, collect_data=not args.no_collect)
+            print(f"[done] 已推送：{', '.join(result['sent']) or '无'}")
+        else:
+            run_once(db=db, dry_run=True, collect_data=not args.no_collect)
     return 0
 
 

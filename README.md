@@ -16,7 +16,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 
 - 仓库：<https://github.com/lyjiiiirr-crypto/GoldMacroAI>（Public）
 - **重要**：GitHub 原生 `schedule` 事件在本仓库实测完全不触发（主工作流与全新探针工作流均为 0 次 schedule run，GitHub 状态页正常），因此不再依赖原生 cron。
-- `.github/workflows/gold-macro-keeper.yml`：云端调度链。每次运行计算下一个 UTC 整点后 1 分钟（hh:01，北京时间同为整点后 1 分钟），等待到点后触发日报工作流，再用内置 `GITHUB_TOKEN` 触发下一次 keeper，形成闭环。**每小时检查一次；仅当 CRT 成立时推送** Telegram 日报与 CRT 截图，CRT 未成立保持静默。全程在 GitHub Actions 云端完成，**不依赖本地电脑**。
+- `.github/workflows/gold-macro-keeper.yml`：云端调度链。每次运行计算下一个 UTC 整点后 1 分钟（hh:01，北京时间同为整点后 1 分钟），等待到点后触发日报工作流，再用内置 `GITHUB_TOKEN` 触发下一次 keeper，形成闭环。**每小时检查一次；周末休市（北京周六 06:00 -> 周一 06:00）暂停采集、评分、落库与推送，keeper 仍链式运行；交易时段仅当 CRT 成立时推送** Telegram 日报与 CRT 截图，CRT 未成立保持静默。全程在 GitHub Actions 云端完成，**不依赖本地电脑**。
 - `.github/workflows/gold-macro.yml`：只保留 `workflow_dispatch`，由 keeper 触发；也可在 Actions 页面点 **Run workflow** 手动触发。带 `concurrency: gold-macro-report`，防止同一时段重复推送。
 - 首次启用：在 Actions 手动运行一次 `GoldMacroAI cloud keeper`（无需输入参数），之后自动每小时续链。若链因 GitHub API 故障中断，再次手动运行该工作流即可恢复。
 - 所需 Secrets（Settings → Secrets and variables → Actions）：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`NTFY_TOPIC`。密钥只存在 GitHub Secrets，不进代码库；keeper 只使用内置 `GITHUB_TOKEN`，无需新建 secret。
@@ -71,7 +71,7 @@ AI 黄金宏观分析交易助手：用免费数据源监控美联储政策预�
 | AI 解释 | 本地 Ollama → 云端兼容接口（可选）→ 规则模板，三级自动降级 |
 | Telegram 推送（或免注册 ntfy） | 日报 + 方向变化 / 降息预期变化 / 实际利率异动 / 美元异动 / 数据意外提醒，带冷却去重 |
 | 主动查询命令 | `/now` `/fed` `/rates` `/dxy` `/calendar` `/cot` `/tech` `/gex` `/fusion` `/crt` `/bias` `/report` `/help` |
-| 定时任务 | GitHub 云端 keeper 链每小时触发，在 1H 收线后约 1 分钟（每小时 UTC hh:01 / 北京整点后 1 分钟）采集检查；**仅 CRT 成立时推送** Telegram 日报与 CRT 截图，未成立保持静默；历史数据库自动保存回仓库；不依赖本地电脑 |
+| 定时任务 | GitHub 云端 keeper 链每小时触发，在 1H 收线后约 1 分钟（每小时 UTC hh:01 / 北京整点后 1 分钟）采集检查；**周末休市暂停采集与推送；交易时段仅 CRT 成立时推送** Telegram 日报与 CRT 截图，未成立保持静默；历史数据库自动保存回仓库；不依赖本地电脑 |
 | 可视化 | 可选 Streamlit 仪表盘（查看历史评分与最新数据） |
 
 **V1.0 仍不做/限制**：CME 官方 FedWatch API（收费，本项目使用社区公开归档，非官方承诺）、Trading Central 授权研报（商业/B2B 产品，无可验证免费公开源，本项目改用公开行情本地自算并明确标注非官方研报）、市场一致预期（BLS/BEA 不发布，故不伪造"意外值"，仍可人工导入）、秒级行情监控、交易结构识别（V2.0）。

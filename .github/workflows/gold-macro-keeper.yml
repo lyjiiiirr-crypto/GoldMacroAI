@@ -3,7 +3,8 @@ name: GoldMacroAI cloud keeper
 # GitHub 原生 schedule 事件在本仓库完全不触发，因此用一个云端常驻的
 # workflow_dispatch 链代替定时器：每次运行等到下一个 UTC 整点后 1 分钟
 # （hh:01），触发日报工作流，再触发下一次 keeper。每小时检查一次；
-# 日报/图表仅在 CRT 成立时推送，未成立时静默。全程云端完成，不依赖本地电脑。
+# 周末休市（北京周六 06:00 -> 周一 06:00）暂停采集与推送，keeper 仍链式运行；
+# 交易时段日报/图表仅在 CRT 成立时推送，未成立时静默。全程云端完成，不依赖本地电脑。
 on:
   workflow_dispatch:
 
@@ -42,12 +43,35 @@ jobs:
           echo "Waiting $seconds seconds"
           sleep "$seconds"
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check market hours
+        id: market
+        run: |
+          python3 - <<'PY' > market_status.txt
+          from scheduler.market_hours import market_closed_status
+
+          closed, reason = market_closed_status()
+          print("closed=true" if closed else "closed=false")
+          print(f"status={reason}")
+          PY
+          cat market_status.txt >> "$GITHUB_OUTPUT"
+          cat market_status.txt
+
       - name: Dispatch report
+        if: steps.market.outputs.closed != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh workflow run gold-macro.yml --repo lyjiiiirr-crypto/GoldMacroAI --ref main
           echo "Macro report dispatched at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Skip report (market closed)
+        if: steps.market.outputs.closed == 'true'
+        run: echo "周末休市，跳过本次采集与推送；keeper 继续链式运行。"
 
       - name: Chain next keeper run
         env:

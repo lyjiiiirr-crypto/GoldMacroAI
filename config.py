@@ -90,6 +90,12 @@ NTFY_TOPIC = env("NTFY_TOPIC")
 NTFY_BASE_URL = env("NTFY_BASE_URL", "https://ntfy.sh").rstrip("/")
 ALERT_COOLDOWN_HOURS = int(env("ALERT_COOLDOWN_HOURS", "12"))
 
+# ---- XAUUSD 周末休市：窗口内停止采集、评分、落库与推送 ----
+# 北京时间，默认周六 06:00 -> 周一 06:00；keeper 仍运行以便自动恢复。
+MARKET_TIMEZONE_OFFSET_HOURS = int(env("MARKET_TIMEZONE_OFFSET_HOURS", "8"))
+MARKET_CLOSED_START = env("MARKET_CLOSED_START", "Sat 06:00")
+MARKET_CLOSED_END = env("MARKET_CLOSED_END", "Mon 06:00")
+
 # ---- AI 引擎：本地 Ollama 优先，兼容 OpenAI 格式的云端接口备用 ----
 OLLAMA_ENABLED = env("OLLAMA_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 OLLAMA_HOST = env("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
